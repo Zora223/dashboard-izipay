@@ -29,33 +29,62 @@ st.markdown("""
     .main .block-container { padding-top: 1rem; padding-bottom: 2rem; max-width: 1400px; }
     #MainMenu, footer { visibility: hidden; }
     
-    /* Header transparente pero visible (para poder abrir el sidebar) */
+    /* Mostrar header de Streamlit (contiene el botón del sidebar) */
     header[data-testid="stHeader"] {
-        background: transparent !important;
-        height: 0px;
-    }
-
-    /* Botón de flecha para abrir sidebar - siempre visible */
-    button[data-testid="stBaseButton-headerNoPadding"],
-    button[kind="header"],
-    [data-testid="stSidebarCollapsedControl"] {
-        display: block !important;
+        background: rgba(255, 255, 255, 0.9) !important;
+        backdrop-filter: blur(10px);
+        height: auto !important;
         visibility: visible !important;
-        background: white !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: 8px !important;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
-        color: #1E293B !important;
+        display: block !important;
         z-index: 999999 !important;
-        position: fixed !important;
-        top: 15px !important;
-        left: 15px !important;
-        padding: 8px !important;
     }
-    button[data-testid="stBaseButton-headerNoPadding"]:hover,
-    [data-testid="stSidebarCollapsedControl"]:hover {
-        background: #F3F4F6 !important;
-        border-color: #8B5CF6 !important;
+    
+    /* Toolbar interior visible */
+    div[data-testid="stToolbar"] {
+        visibility: visible !important;
+        display: flex !important;
+    }
+    
+    /* TODOS los botones del header visibles */
+    header[data-testid="stHeader"] button,
+    header[data-testid="stHeader"] * {
+        visibility: visible !important;
+    }
+    
+    /* Botón específico para abrir sidebar - super visible */
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="collapsedControl"],
+    button[kind="headerNoPadding"] {
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        position: fixed !important;
+        top: 12px !important;
+        left: 12px !important;
+        z-index: 9999999 !important;
+        background: white !important;
+        border: 2px solid #8B5CF6 !important;
+        border-radius: 10px !important;
+        padding: 8px 12px !important;
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3) !important;
+        color: #6D28D9 !important;
+        font-weight: 700 !important;
+        cursor: pointer !important;
+    }
+    
+    [data-testid="stSidebarCollapsedControl"] svg,
+    [data-testid="collapsedControl"] svg {
+        color: #6D28D9 !important;
+        fill: #6D28D9 !important;
+        width: 20px !important;
+        height: 20px !important;
+    }
+    
+    [data-testid="stSidebarCollapsedControl"]:hover,
+    [data-testid="collapsedControl"]:hover {
+        background: #EEF2FF !important;
+        border-color: #6D28D9 !important;
+        transform: scale(1.05);
     }
     
     /* FONDO PRINCIPAL CLARO */
