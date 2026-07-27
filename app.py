@@ -11,11 +11,14 @@ import json
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
+if "sidebar_state" not in st.session_state:
+    st.session_state.sidebar_state = "expanded"
+
 st.set_page_config(
     page_title="Dashboard Gerencial | La Casa del Emprendedor",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state=st.session_state.sidebar_state
 )
 
 # ============================================================
@@ -28,64 +31,6 @@ st.markdown("""
     html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
     .main .block-container { padding-top: 1rem; padding-bottom: 2rem; max-width: 1400px; }
     #MainMenu, footer { visibility: hidden; }
-    
-    /* Mostrar header de Streamlit (contiene el botón del sidebar) */
-    header[data-testid="stHeader"] {
-        background: rgba(255, 255, 255, 0.9) !important;
-        backdrop-filter: blur(10px);
-        height: auto !important;
-        visibility: visible !important;
-        display: block !important;
-        z-index: 999999 !important;
-    }
-    
-    /* Toolbar interior visible */
-    div[data-testid="stToolbar"] {
-        visibility: visible !important;
-        display: flex !important;
-    }
-    
-    /* TODOS los botones del header visibles */
-    header[data-testid="stHeader"] button,
-    header[data-testid="stHeader"] * {
-        visibility: visible !important;
-    }
-    
-    /* Botón específico para abrir sidebar - super visible */
-    [data-testid="stSidebarCollapsedControl"],
-    [data-testid="collapsedControl"],
-    button[kind="headerNoPadding"] {
-        display: flex !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-        position: fixed !important;
-        top: 12px !important;
-        left: 12px !important;
-        z-index: 9999999 !important;
-        background: white !important;
-        border: 2px solid #8B5CF6 !important;
-        border-radius: 10px !important;
-        padding: 8px 12px !important;
-        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3) !important;
-        color: #6D28D9 !important;
-        font-weight: 700 !important;
-        cursor: pointer !important;
-    }
-    
-    [data-testid="stSidebarCollapsedControl"] svg,
-    [data-testid="collapsedControl"] svg {
-        color: #6D28D9 !important;
-        fill: #6D28D9 !important;
-        width: 20px !important;
-        height: 20px !important;
-    }
-    
-    [data-testid="stSidebarCollapsedControl"]:hover,
-    [data-testid="collapsedControl"]:hover {
-        background: #EEF2FF !important;
-        border-color: #6D28D9 !important;
-        transform: scale(1.05);
-    }
     
     /* FONDO PRINCIPAL CLARO */
     .stApp { background: #F3F4F6 !important; }
@@ -106,6 +51,14 @@ st.markdown("""
     }
     .header-premium h1 { font-size: 32px; font-weight: 800; margin: 0; color: white; }
     .header-premium p { opacity: 0.9; font-size: 14px; margin: 4px 0 0 0; color: white; }
+    
+    /* BOTÓN PROPIO PARA ABRIR SIDEBAR */
+    .stButton > button[data-testid="baseButton-primary"] {
+        background: linear-gradient(135deg, #6366F1, #8B5CF6) !important;
+        color: white !important;
+        border: none !important;
+        font-weight: 600 !important;
+    }
     
     /* SEMÁFORO */
     .semaforo {
@@ -272,6 +225,15 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+# ============================================================
+# BOTÓN PARA ABRIR/CERRAR SIDEBAR (solución manual)
+# ============================================================
+col_btn, col_space = st.columns([1, 10])
+with col_btn:
+    if st.button("📤 Cargar Archivos", type="primary", use_container_width=True):
+        st.session_state.sidebar_state = "expanded" if st.session_state.sidebar_state == "collapsed" else "collapsed"
+        st.rerun()
 
 # ============================================================
 # BASE DE DATOS LOCAL
@@ -487,7 +449,7 @@ df_izipay_raw = pd.DataFrame(data["izipay"])
 lista_cajas = data.get("cajas", [])
 
 if len(df_ventas) == 0 and len(df_izipay_raw) == 0:
-    st.info("👈 **Comienza subiendo tus archivos desde el panel izquierdo**")
+    st.info("👈 **Comienza subiendo tus archivos desde el panel izquierdo o presiona el botón '📤 Cargar Archivos' arriba**")
     st.markdown("""
     ### 📋 Instrucciones:
     1. Sube los **PDFs de caja** (uno por cajera)
