@@ -27,7 +27,36 @@ st.markdown("""
     
     html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
     .main .block-container { padding-top: 1rem; padding-bottom: 2rem; max-width: 1400px; }
-    #MainMenu, footer, header { visibility: hidden; }
+    #MainMenu, footer { visibility: hidden; }
+    
+    /* Header transparente pero visible (para poder abrir el sidebar) */
+    header[data-testid="stHeader"] {
+        background: transparent !important;
+        height: 0px;
+    }
+
+    /* Botón de flecha para abrir sidebar - siempre visible */
+    button[data-testid="stBaseButton-headerNoPadding"],
+    button[kind="header"],
+    [data-testid="stSidebarCollapsedControl"] {
+        display: block !important;
+        visibility: visible !important;
+        background: white !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 8px !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
+        color: #1E293B !important;
+        z-index: 999999 !important;
+        position: fixed !important;
+        top: 15px !important;
+        left: 15px !important;
+        padding: 8px !important;
+    }
+    button[data-testid="stBaseButton-headerNoPadding"]:hover,
+    [data-testid="stSidebarCollapsedControl"]:hover {
+        background: #F3F4F6 !important;
+        border-color: #8B5CF6 !important;
+    }
     
     /* FONDO PRINCIPAL CLARO */
     .stApp { background: #F3F4F6 !important; }
@@ -181,7 +210,7 @@ st.markdown("""
         border-color: #E5E7EB;
     }
     
-    /* FILTROS - Multiselect claros */
+    /* FILTROS */
     div[data-baseweb="select"] > div {
         background-color: white !important;
         border-color: #E5E7EB !important;
