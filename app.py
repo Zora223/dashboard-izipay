@@ -32,7 +32,6 @@ st.markdown("""
     .main .block-container { padding-top: 1rem; padding-bottom: 2rem; max-width: 1400px; }
     #MainMenu, footer { visibility: hidden; }
     
-    /* FONDO PRINCIPAL CLARO */
     .stApp { background: #F3F4F6 !important; }
     .main { background: #F3F4F6 !important; }
     
@@ -52,36 +51,33 @@ st.markdown("""
     .header-premium h1 { font-size: 32px; font-weight: 800; margin: 0; color: white; }
     .header-premium p { opacity: 0.9; font-size: 14px; margin: 4px 0 0 0; color: white; }
     
-    /* BOTÓN PROPIO PARA ABRIR SIDEBAR */
-    .stButton > button[data-testid="baseButton-primary"] {
-        background: linear-gradient(135deg, #6366F1, #8B5CF6) !important;
-        color: white !important;
-        border: none !important;
-        font-weight: 600 !important;
-    }
-    
     /* SEMÁFORO */
     .semaforo {
         background: white; padding: 20px 28px; border-radius: 14px; margin-bottom: 24px;
-        display: flex; align-items: center; gap: 20px;
+        display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
         box-shadow: 0 2px 12px rgba(0,0,0,0.06);
     }
     .semaforo-ok { border-left: 6px solid #059669; }
     .semaforo-warn { border-left: 6px solid #D97706; }
     .semaforo-danger { border-left: 6px solid #DC2626; }
     
-    /* KPIs */
+    /* KPIs GRID RESPONSIVE */
+    .kpis-grid {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 16px;
+        margin-bottom: 24px;
+    }
     .kpi-card {
         background: white; padding: 22px; border-radius: 14px;
         box-shadow: 0 2px 12px rgba(0,0,0,0.06);
         border-top: 4px solid #1E40AF;
         transition: all 0.3s;
-        height: 100%;
     }
     .kpi-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
     .kpi-icon { font-size: 24px; margin-bottom: 8px; }
     .kpi-label { font-size: 11px; color: #6B7280; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
-    .kpi-value { font-size: 22px; font-weight: 800; color: #111827; margin-top: 6px; }
+    .kpi-value { font-size: 22px; font-weight: 800; color: #111827; margin-top: 6px; word-wrap: break-word; }
     .kpi-sub { font-size: 11px; color: #9CA3AF; margin-top: 4px; }
     
     /* CAJAS */
@@ -91,7 +87,7 @@ st.markdown("""
     }
     .caja-header {
         padding: 20px 24px; color: white;
-        display: flex; justify-content: space-between; align-items: center;
+        display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
     }
     .caja-nombre { font-size: 22px; font-weight: 800; }
     .caja-vendedor { font-size: 13px; opacity: 0.9; margin-top: 4px; }
@@ -101,7 +97,7 @@ st.markdown("""
     }
     .caja-body { padding: 20px 24px; }
     .caja-horario {
-        display: flex; justify-content: space-between; padding: 12px;
+        display: flex; justify-content: space-between; padding: 12px; flex-wrap: wrap; gap: 8px;
         background: #F9FAFB; border-radius: 8px; margin-bottom: 16px;
         font-size: 13px; color: #4B5563;
     }
@@ -130,14 +126,12 @@ st.markdown("""
         margin: 24px 0 16px 0; display: flex; align-items: center; gap: 10px;
     }
     
-    /* SIDEBAR SUAVE Y ELEGANTE */
+    /* SIDEBAR */
     section[data-testid="stSidebar"] {
         background: #FAFBFC !important;
         border-right: 1px solid #E5E7EB;
     }
-    section[data-testid="stSidebar"] > div {
-        background: #FAFBFC !important;
-    }
+    section[data-testid="stSidebar"] > div { background: #FAFBFC !important; }
     section[data-testid="stSidebar"] h1,
     section[data-testid="stSidebar"] h2,
     section[data-testid="stSidebar"] h3,
@@ -155,7 +149,6 @@ st.markdown("""
         border-radius: 10px;
         padding: 10px 20px;
         box-shadow: 0 4px 12px rgba(139, 92, 246, 0.2);
-        transition: all 0.3s;
     }
     section[data-testid="stSidebar"] .stButton button:hover {
         transform: translateY(-2px);
@@ -178,9 +171,7 @@ st.markdown("""
         border-color: #8B5CF6;
         background: #FAFAFF;
     }
-    section[data-testid="stSidebar"] [data-testid="stFileUploader"] small {
-        color: #6B7280 !important;
-    }
+    section[data-testid="stSidebar"] [data-testid="stFileUploader"] small { color: #6B7280 !important; }
     section[data-testid="stSidebar"] [data-testid="stFileUploader"] button {
         background: #F3F4F6 !important;
         color: #4B5563 !important;
@@ -188,9 +179,7 @@ st.markdown("""
         box-shadow: none !important;
         font-weight: 500 !important;
     }
-    section[data-testid="stSidebar"] hr {
-        border-color: #E5E7EB;
-    }
+    section[data-testid="stSidebar"] hr { border-color: #E5E7EB; }
     
     /* FILTROS */
     div[data-baseweb="select"] > div {
@@ -201,9 +190,7 @@ st.markdown("""
         background-color: #EEF2FF !important;
         color: #4338CA !important;
     }
-    div[data-baseweb="tag"] span {
-        color: #4338CA !important;
-    }
+    div[data-baseweb="tag"] span { color: #4338CA !important; }
     .stMultiSelect label, .stMultiSelect > label > div {
         color: #1E293B !important;
         font-weight: 600 !important;
@@ -215,23 +202,42 @@ st.markdown("""
         border-radius: 10px;
         padding: 4px;
     }
-    .stTabs [data-baseweb="tab"] {
-        color: #4B5563 !important;
-    }
+    .stTabs [data-baseweb="tab"] { color: #4B5563 !important; }
     .stTabs [aria-selected="true"] {
         background: #EEF2FF !important;
         color: #4338CA !important;
         border-radius: 8px;
     }
+    
+    /* ========== RESPONSIVE ========== */
+    @media (max-width: 1200px) {
+        .kpis-grid { grid-template-columns: repeat(3, 1fr) !important; }
+    }
+    @media (max-width: 768px) {
+        .header-premium { padding: 20px 24px; }
+        .header-premium h1 { font-size: 22px; }
+        .header-premium p { font-size: 12px; }
+        .kpis-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 10px !important; }
+        .kpi-card { padding: 14px !important; }
+        .kpi-value { font-size: 16px !important; }
+        .kpi-label { font-size: 10px !important; }
+        .semaforo { flex-direction: column; text-align: center; }
+        .caja-nombre { font-size: 18px; }
+        .section-title { font-size: 16px; }
+    }
+    @media (max-width: 480px) {
+        .kpis-grid { grid-template-columns: 1fr !important; }
+        .main .block-container { padding: 0.5rem !important; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # ============================================================
-# BOTÓN PARA ABRIR/CERRAR SIDEBAR (solución manual)
+# BOTÓN TOGGLE SIDEBAR
 # ============================================================
 col_btn, col_space = st.columns([1, 10])
 with col_btn:
-    if st.button("📤 Cargar Archivos", type="primary", use_container_width=True):
+    if st.button("📤 Panel", type="primary", use_container_width=True):
         st.session_state.sidebar_state = "expanded" if st.session_state.sidebar_state == "collapsed" else "collapsed"
         st.rerun()
 
@@ -251,7 +257,7 @@ def guardar_historial(data):
         json.dump(data, f, ensure_ascii=False, indent=2, default=str)
 
 # ============================================================
-# FUNCIONES EXTRACCIÓN
+# FUNCIONES
 # ============================================================
 def parsear_metodo_pago(texto_crudo):
     if not texto_crudo: return ("Desconocido", None, None)
@@ -449,7 +455,7 @@ df_izipay_raw = pd.DataFrame(data["izipay"])
 lista_cajas = data.get("cajas", [])
 
 if len(df_ventas) == 0 and len(df_izipay_raw) == 0:
-    st.info("👈 **Comienza subiendo tus archivos desde el panel izquierdo o presiona el botón '📤 Cargar Archivos' arriba**")
+    st.info("👈 **Comienza subiendo tus archivos desde el panel izquierdo**")
     st.markdown("""
     ### 📋 Instrucciones:
     1. Sube los **PDFs de caja** (uno por cajera)
@@ -491,34 +497,86 @@ with col3:
     metodos_disp = ["Efectivo", "Yape", "Tarjeta de crédito", "Tarjeta de débito"]
     metodos_sel = st.multiselect("💳 Métodos", metodos_disp, default=metodos_disp)
 
-# Aplicar filtros
-df_ventas_f = df_ventas[
+# ============================================================
+# PASO 1: FILTRAR POR FECHA Y CAJA (BASE)
+# La conciliación se hace SIEMPRE con TODOS los métodos digitales
+# ============================================================
+df_ventas_base = df_ventas[
     (df_ventas["fecha"].isin(fechas_sel)) &
-    (df_ventas["caja"].isin(cajas_sel)) &
-    (df_ventas["metodo_pago"].isin(metodos_sel))
+    (df_ventas["caja"].isin(cajas_sel))
 ] if len(df_ventas) > 0 else df_ventas
 
-df_izipay_f = df_izipay_raw[df_izipay_raw["Fecha"].isin(fechas_sel)] if len(df_izipay_raw) > 0 else df_izipay_raw
-df_digital = df_ventas_f[df_ventas_f["metodo_pago"].isin(["Yape", "Tarjeta de crédito", "Tarjeta de débito"])].copy()
+df_izipay_base = df_izipay_raw[df_izipay_raw["Fecha"].isin(fechas_sel)] if len(df_izipay_raw) > 0 else df_izipay_raw
 cajas_filt = [c for c in lista_cajas if c["fecha"] in fechas_sel and c["caja"] in cajas_sel]
 
 # ============================================================
-# CÁLCULOS
+# PASO 2: CONCILIACIÓN COMPLETA (con todos los digitales)
 # ============================================================
-efectivo_total = df_ventas_f[df_ventas_f["metodo_pago"] == "Efectivo"]["monto_pagado"].sum()
-digital_total = df_digital["monto_pagado"].sum()
-izipay_total = df_izipay_f["Monto total"].sum() if len(df_izipay_f) > 0 else 0
-ingreso_total = df_ventas_f["monto_pagado"].sum()
-diferencia = digital_total - izipay_total
+df_digital_base = df_ventas_base[df_ventas_base["metodo_pago"].isin(
+    ["Yape", "Tarjeta de crédito", "Tarjeta de débito"]
+)].copy()
 
-if len(df_digital) > 0 and len(df_izipay_f) > 0:
-    df_res, df_izi_check = conciliar(df_digital, df_izipay_f)
-    alertas_caja = df_res[df_res["Estado"].str.contains("SIN COBRO")]
-    izipay_huerf = df_izi_check[~df_izi_check["Usado"]]
+if len(df_digital_base) > 0 and len(df_izipay_base) > 0:
+    df_res_full, df_izi_check_full = conciliar(df_digital_base, df_izipay_base)
+    alertas_caja_full = df_res_full[df_res_full["Estado"].str.contains("SIN COBRO")]
+    izipay_huerf_full = df_izi_check_full[~df_izi_check_full["Usado"]]
 else:
-    df_res = pd.DataFrame()
-    alertas_caja = pd.DataFrame()
+    df_res_full = pd.DataFrame()
+    alertas_caja_full = pd.DataFrame()
+    izipay_huerf_full = pd.DataFrame()
+
+# ============================================================
+# PASO 3: APLICAR FILTRO DE MÉTODO PARA VISUALIZACIÓN
+# ============================================================
+df_ventas_f = df_ventas_base[df_ventas_base["metodo_pago"].isin(metodos_sel)] if len(df_ventas_base) > 0 else df_ventas_base
+df_digital = df_ventas_f[df_ventas_f["metodo_pago"].isin(["Yape", "Tarjeta de crédito", "Tarjeta de débito"])].copy()
+
+# Filtrar alertas de caja según método
+alertas_caja = alertas_caja_full[alertas_caja_full["Método"].isin(metodos_sel)] if len(alertas_caja_full) > 0 else pd.DataFrame()
+
+# Filtrar huérfanos Izipay según método
+if len(izipay_huerf_full) > 0:
+    quiere_yape = "Yape" in metodos_sel
+    quiere_tarjeta = any(m in metodos_sel for m in ["Tarjeta de crédito", "Tarjeta de débito"])
+    
+    if quiere_yape and quiere_tarjeta:
+        izipay_huerf = izipay_huerf_full
+    elif quiere_yape:
+        izipay_huerf = izipay_huerf_full[izipay_huerf_full["Medio de cobro"] == "sQR"]
+    elif quiere_tarjeta:
+        izipay_huerf = izipay_huerf_full[izipay_huerf_full["Medio de cobro"] != "sQR"]
+    else:
+        izipay_huerf = pd.DataFrame()
+else:
     izipay_huerf = pd.DataFrame()
+
+# Filtrar df_res según método (para tab "Todas")
+df_res = df_res_full[df_res_full["Método"].isin(metodos_sel)] if len(df_res_full) > 0 else pd.DataFrame()
+
+# Filtrar Izipay según método (para KPIs)
+if len(df_izipay_base) > 0:
+    quiere_yape = "Yape" in metodos_sel
+    quiere_tarjeta = any(m in metodos_sel for m in ["Tarjeta de crédito", "Tarjeta de débito"])
+    
+    if quiere_yape and quiere_tarjeta:
+        df_izipay_f = df_izipay_base
+    elif quiere_yape:
+        df_izipay_f = df_izipay_base[df_izipay_base["Medio de cobro"] == "sQR"]
+    elif quiere_tarjeta:
+        df_izipay_f = df_izipay_base[df_izipay_base["Medio de cobro"] != "sQR"]
+    else:
+        df_izipay_f = pd.DataFrame()
+else:
+    df_izipay_f = df_izipay_base
+
+# ============================================================
+# CÁLCULOS FINALES
+# ============================================================
+efectivo_total = df_ventas_f[df_ventas_f["metodo_pago"] == "Efectivo"]["monto_pagado"].sum() if len(df_ventas_f) > 0 else 0
+digital_total = df_digital["monto_pagado"].sum() if len(df_digital) > 0 else 0
+izipay_total = df_izipay_f["Monto total"].sum() if len(df_izipay_f) > 0 else 0
+ingreso_total = df_ventas_f["monto_pagado"].sum() if len(df_ventas_f) > 0 else 0
+diferencia = digital_total - izipay_total
 
 monto_sospechoso = alertas_caja["Monto"].sum() if len(alertas_caja) > 0 else 0
 monto_no_reg = izipay_huerf["Monto total"].sum() if len(izipay_huerf) > 0 else 0
@@ -549,12 +607,12 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ============================================================
-# KPIs
+# KPIs (GRID RESPONSIVE)
 # ============================================================
 pct_efectivo = (efectivo_total/ingreso_total*100) if ingreso_total > 0 else 0
 
 kpis_html = f"""
-<div style="display:grid; grid-template-columns:repeat(6,1fr); gap:16px; margin-bottom:24px;">
+<div class="kpis-grid">
     <div class="kpi-card" style="border-top-color:#1E40AF;">
         <div class="kpi-icon">💰</div>
         <div class="kpi-label">Ingreso Total</div>
@@ -596,7 +654,7 @@ kpis_html = f"""
 st.markdown(kpis_html, unsafe_allow_html=True)
 
 # ============================================================
-# RESUMEN DE QUIEBRES POR CAJA
+# QUIEBRES POR CAJA
 # ============================================================
 st.markdown('<div class="section-title">🏪 Resumen de Quiebres por Caja</div>', unsafe_allow_html=True)
 
@@ -669,8 +727,8 @@ def tarjeta_caja(caja_info, ventas_caja, alertas_caja_df):
 if len(cajas_filt) > 0:
     cajas_html_list = []
     for caja_info in cajas_filt:
-        ventas_c = df_ventas_f[(df_ventas_f["caja"] == caja_info["caja"]) & 
-                                (df_ventas_f["fecha"] == caja_info["fecha"])]
+        ventas_c = df_ventas_base[(df_ventas_base["caja"] == caja_info["caja"]) & 
+                                    (df_ventas_base["fecha"] == caja_info["fecha"])]
         if len(ventas_c) > 0:
             cajas_html_list.append(tarjeta_caja(caja_info, ventas_c, alertas_caja))
     
