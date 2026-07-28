@@ -373,38 +373,57 @@ with st.sidebar:
             
             if yape_uploaded:
                 try:
-                    df_y = pd.read_excel(yape_uploaded)
-                    st.info(f"📋 Columnas: {list(df_y.columns)}")
+                    # Buscar automáticamente la fila del header
+                    df_temp = pd.read_excel(yape_uploaded, header=None)
+                    header_row = None
+                    for i, row in df_temp.iterrows():
+                        valores = [str(v).lower() for v in row.values if pd.notna(v)]
+                        if any("tipo" in v and "transac" in v for v in valores):
+                            header_row = i
+                            break
                     
-                    col_fecha = None
-                    col_monto = None
-                    col_origen = None
-                    col_tipo = None
-                    for c in df_y.columns:
-                        cl = str(c).lower().strip()
-                        if "fecha" in cl and col_fecha is None: col_fecha = c
-                        if "monto" in cl and col_monto is None: col_monto = c
-                        if "origen" in cl and col_origen is None: col_origen = c
-                        if "tipo" in cl and col_tipo is None: col_tipo = c
-                    
-                    if col_fecha and col_monto:
-                        df_y[col_fecha] = pd.to_datetime(df_y[col_fecha], dayfirst=True, errors='coerce')
-                        df_y = df_y.dropna(subset=[col_fecha])
-                        if col_tipo:
-                            df_y = df_y[df_y[col_tipo].astype(str).str.upper().str.contains("PAG", na=False)]
-                        
-                        fechas_nuevas_y = df_y[col_fecha].dt.date.unique()
-                        data["yape"] = [y for y in data["yape"] 
-                                       if pd.to_datetime(y["fecha_hora"]).date() not in fechas_nuevas_y]
-                        for _, row in df_y.iterrows():
-                            data["yape"].append({
-                                "fecha_hora": row[col_fecha].isoformat(),
-                                "origen": str(row[col_origen]) if col_origen else "N/A",
-                                "monto": float(row[col_monto]),
-                            })
-                        st.success(f"✅ Yape: {len(df_y)} trans")
+                    if header_row is None:
+                        st.error("❌ No se encontró el encabezado en el Excel de Yape")
                     else:
-                        st.error(f"❌ Faltan columnas Fecha/Monto en Yape")
+                        df_y = pd.read_excel(yape_uploaded, header=header_row)
+                        st.info(f"📋 Header detectado en fila {header_row}. Columnas: {list(df_y.columns)}")
+                        
+                        col_fecha = None
+                        col_monto = None
+                        col_origen = None
+                        col_tipo = None
+                        for c in df_y.columns:
+                            cl = str(c).lower().strip()
+                            if "fecha" in cl and col_fecha is None: col_fecha = c
+                            if "monto" in cl and col_monto is None: col_monto = c
+                            if "origen" in cl and col_origen is None: col_origen = c
+                            if "tipo" in cl and col_tipo is None: col_tipo = c
+                        
+                        if col_fecha and col_monto:
+                            df_y[col_fecha] = pd.to_datetime(df_y[col_fecha], dayfirst=True, errors='coerce')
+                            df_y = df_y.dropna(subset=[col_fecha])
+                            
+                            if col_tipo:
+                                antes = len(df_y)
+                                df_y = df_y[df_y[col_tipo].astype(str).str.upper().str.contains("PAG", na=False)]
+                                st.info(f"✅ Filas 'TE PAGÓ': {len(df_y)} de {antes}")
+                            
+                            df_y[col_monto] = pd.to_numeric(df_y[col_monto], errors='coerce')
+                            df_y = df_y.dropna(subset=[col_monto])
+                            
+                            fechas_nuevas_y = df_y[col_fecha].dt.date.unique()
+                            data["yape"] = [y for y in data["yape"] 
+                                           if pd.to_datetime(y["fecha_hora"]).date() not in fechas_nuevas_y]
+                            
+                            for _, row in df_y.iterrows():
+                                data["yape"].append({
+                                    "fecha_hora": row[col_fecha].isoformat(),
+                                    "origen": str(row[col_origen]) if col_origen else "N/A",
+                                    "monto": float(row[col_monto]),
+                                })
+                            st.success(f"✅ Yape: {len(df_y)} transacciones cargadas")
+                        else:
+                            st.error(f"❌ Faltan columnas Fecha/Monto. Encontré: {list(df_y.columns)}")
                 except Exception as e:
                     st.error(f"❌ Error Yape: {str(e)}")
             
@@ -501,14 +520,12 @@ df_yape_base = df_yape_raw[df_yape_raw["Fecha"].isin(fechas_sel)] if len(df_yape
 cajas_filt = [c for c in lista_cajas if c["fecha"] in fechas_sel and c["caja"] in cajas_sel]
 
 # ============================================================
-# CONCILIACIÓN INTELIGENTE
-# Todas las ventas digitales se cruzan con Izipay + Yape unidos
+# CONCILIACIÓN UNIFICADA (Izipay + Yape juntos)
 # ============================================================
 df_digital_base = df_ventas_base[df_ventas_base["metodo_pago"].isin(
     ["Yape", "Tarjeta de crédito", "Tarjeta de débito"]
 )].copy()
 
-# Unir Izipay + Yape en un solo DataFrame para conciliación
 frames_cobros = []
 if len(df_izipay_base) > 0:
     tmp_izi = df_izipay_base.copy()
@@ -524,11 +541,9 @@ if frames_cobros:
 else:
     df_cobros_all = pd.DataFrame()
 
-# Conciliar
 if len(df_digital_base) > 0 and len(df_cobros_all) > 0:
     df_res_full, df_cobros_check = conciliar(df_digital_base, df_cobros_all)
     alertas_caja_full = df_res_full[df_res_full["Estado"].str.contains("SIN COBRO")]
-    # Huérfanos separados por fuente
     izipay_huerf_full = df_cobros_check[(~df_cobros_check["Usado"]) & (df_cobros_check["Fuente"] == "Izipay")] if "Fuente" in df_cobros_check.columns else pd.DataFrame()
     yape_huerf_full = df_cobros_check[(~df_cobros_check["Usado"]) & (df_cobros_check["Fuente"] == "Yape")] if "Fuente" in df_cobros_check.columns else pd.DataFrame()
 else:
@@ -538,7 +553,7 @@ else:
     yape_huerf_full = pd.DataFrame()
 
 # ============================================================
-# APLICAR FILTRO DE MÉTODO (VISUALIZACIÓN)
+# APLICAR FILTRO DE MÉTODO
 # ============================================================
 df_ventas_f = df_ventas_base[df_ventas_base["metodo_pago"].isin(metodos_sel)] if len(df_ventas_base) > 0 else df_ventas_base
 df_digital = df_ventas_f[df_ventas_f["metodo_pago"].isin(["Yape", "Tarjeta de crédito", "Tarjeta de débito"])].copy()
@@ -553,7 +568,6 @@ else:
     izipay_huerf = izipay_huerf_full[izipay_huerf_full["Medio de cobro"] != "sQR"] if len(izipay_huerf_full) > 0 else pd.DataFrame()
     yape_huerf = pd.DataFrame()
 
-# Izipay filtrado para KPI
 if len(df_izipay_base) > 0:
     quiere_yape = "Yape" in metodos_sel
     quiere_tarjeta = any(m in metodos_sel for m in ["Tarjeta de crédito", "Tarjeta de débito"])
