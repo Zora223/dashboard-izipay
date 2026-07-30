@@ -206,6 +206,16 @@ def guardar_historial(data):
 # ============================================================
 # FUNCIONES DE PARSEO
 # ============================================================
+def normalizar_num_op(val):
+    """Convierte cualquier valor a string limpio SIN quitar ceros iniciales"""
+    if val is None: return ""
+    if isinstance(val, float):
+        if pd.isna(val): return ""
+        val = int(val)
+    s = str(val).strip()
+    if s.endswith(".0"): s = s[:-2]
+    return s
+
 def parsear_metodo_pago(texto_crudo):
     if not texto_crudo: return ("Desconocido", None, None, None)
     texto = texto_crudo.replace("\n", " ").strip()
@@ -224,7 +234,8 @@ def parsear_metodo_pago(texto_crudo):
     num_op = None
     m_num = re.search(r"(?:izi?|bcp|yape|plin|bim)[\s/]+(\d{4,})", texto_lower)
     if m_num:
-        num_op = m_num.group(1).lstrip("0")
+        # MANTENER número TAL CUAL, con ceros iniciales si los tiene
+        num_op = m_num.group(1)
     hora_ref = None
     if num_op is None:
         m_h = re.search(r"(\d{1,2}):(\d{2})", texto)
@@ -337,6 +348,15 @@ def leer_bcp(bcp_file):
         df.loc[mask_no_venta, "es_venta"] = False
     return df, col_fecha, col_monto, col_numop, col_desc
 
+def comparar_num_op(val1, val2):
+    """Compara 2 números de operación de forma flexible: con y sin ceros iniciales"""
+    if not val1 or not val2: return False
+    v1 = normalizar_num_op(val1)
+    v2 = normalizar_num_op(val2)
+    if not v1 or not v2: return False
+    # Comparación exacta O sin ceros iniciales
+    return v1 == v2 or v1.lstrip("0") == v2.lstrip("0")
+
 def conciliar_multi(df_digital, df_izipay, df_yape, df_bcp):
     df_izipay = df_izipay.copy() if len(df_izipay) > 0 else pd.DataFrame()
     df_yape = df_yape.copy() if len(df_yape) > 0 else pd.DataFrame()
@@ -350,12 +370,13 @@ def conciliar_multi(df_digital, df_izipay, df_yape, df_bcp):
         hm = h2m(v.get("hora_referencia"))
         monto = v["monto_pagado"]
         encontrado = None
+        
+        # PRIORIDAD 1: Por número de operación (con comparación flexible)
         if num_op:
             if len(df_izipay) > 0 and encontrado is None:
                 for idx, row in df_izipay[~df_izipay["Usado"]].iterrows():
                     for col in df_izipay.columns:
-                        val = str(row.get(col, "")).lstrip("0")
-                        if val == num_op and abs(row["Monto total"] - monto) <= 0.10:
+                        if comparar_num_op(row.get(col, ""), num_op) and abs(row["Monto total"] - monto) <= 0.10:
                             df_izipay.at[idx, "Usado"] = True
                             encontrado = ("Izipay", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "-"))
                             break
@@ -363,19 +384,19 @@ def conciliar_multi(df_digital, df_izipay, df_yape, df_bcp):
             if len(df_yape) > 0 and encontrado is None:
                 for idx, row in df_yape[~df_yape["Usado"]].iterrows():
                     for col in df_yape.columns:
-                        val = str(row.get(col, "")).lstrip("0")
-                        if val == num_op and abs(row["Monto total"] - monto) <= 0.10:
+                        if comparar_num_op(row.get(col, ""), num_op) and abs(row["Monto total"] - monto) <= 0.10:
                             df_yape.at[idx, "Usado"] = True
                             encontrado = ("Yape", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "Yape"))
                             break
                     if encontrado: break
             if len(df_bcp) > 0 and encontrado is None:
                 for idx, row in df_bcp[~df_bcp["Usado"]].iterrows():
-                    num_bcp = str(row.get("num_operacion", "")).lstrip("0")
-                    if num_bcp == num_op and abs(row["Monto total"] - monto) <= 0.10:
+                    if comparar_num_op(row.get("num_operacion", ""), num_op) and abs(row["Monto total"] - monto) <= 0.10:
                         df_bcp.at[idx, "Usado"] = True
                         encontrado = ("BCP", row.get("Hora_str", "-"), row["Monto total"], row.get("descripcion", "BCP"))
                         break
+        
+        # PRIORIDAD 2: Por hora + monto (Izipay y Yape)
         if encontrado is None and hm is not None:
             if len(df_izipay) > 0:
                 for idx, row in df_izipay[~df_izipay["Usado"]].iterrows():
@@ -389,12 +410,16 @@ def conciliar_multi(df_digital, df_izipay, df_yape, df_bcp):
                         df_yape.at[idx, "Usado"] = True
                         encontrado = ("Yape", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "Yape"))
                         break
+        
+        # PRIORIDAD 3: BCP solo por monto
         if encontrado is None and len(df_bcp) > 0:
             for idx, row in df_bcp[~df_bcp["Usado"]].iterrows():
                 if abs(row["Monto total"] - monto) <= 0.10:
                     df_bcp.at[idx, "Usado"] = True
                     encontrado = ("BCP", row.get("Hora_str", "-"), row["Monto total"], row.get("descripcion", "BCP"))
                     break
+        
+        # Último recurso: solo monto en Izipay/Yape
         if encontrado is None:
             if len(df_izipay) > 0:
                 for idx, row in df_izipay[~df_izipay["Usado"]].iterrows():
@@ -408,6 +433,7 @@ def conciliar_multi(df_digital, df_izipay, df_yape, df_bcp):
                         df_yape.at[idx, "Usado"] = True
                         encontrado = ("Yape*", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "Yape"))
                         break
+        
         if encontrado:
             fuente, hora_e, monto_e, medio_e = encontrado
             estado = "✅ OK"
@@ -512,10 +538,14 @@ with st.sidebar:
                         data["bcp"] = [b for b in data["bcp"] 
                                       if pd.to_datetime(b["fecha_hora"]).date() not in fechas_nuevas_b]
                         for _, row in df_b.iterrows():
+                            # GUARDAR número TAL CUAL con ceros iniciales
+                            num_op_bcp = ""
+                            if col_numop and pd.notna(row[col_numop]):
+                                num_op_bcp = normalizar_num_op(row[col_numop])
                             data["bcp"].append({
                                 "fecha_hora": row[col_fecha].isoformat(),
                                 "monto": float(row[col_monto]),
-                                "num_operacion": str(row[col_numop]) if col_numop else "",
+                                "num_operacion": num_op_bcp,
                                 "descripcion": str(row[col_desc]) if col_desc else "",
                                 "es_venta": bool(row["es_venta"]),
                             })
@@ -612,18 +642,13 @@ df_bcp_base = df_bcp_raw[df_bcp_raw["Fecha"].isin(fechas_sel)] if len(df_bcp_raw
 df_bcp_para_cruce = df_bcp_base[df_bcp_base["es_venta"] == True] if len(df_bcp_base) > 0 else df_bcp_base
 cajas_filt = [c for c in lista_cajas if c["fecha"] in fechas_sel and c["caja"] in cajas_sel]
 
-# ============================================================
-# OPCIÓN D: DETECTAR DUPLICADOS YAPE-BCP ANTES DE CONCILIAR
-# Si un cobro Yape coincide en monto con un BCP, es el mismo cobro
-# Eliminamos el Yape porque el BCP tiene número de operación (más confiable)
-# ============================================================
+# ELIMINAR DUPLICADOS YAPE-BCP
 df_yape_para_cruce = df_yape_base.copy() if len(df_yape_base) > 0 else pd.DataFrame()
 if len(df_yape_para_cruce) > 0 and len(df_bcp_para_cruce) > 0:
     montos_bcp = df_bcp_para_cruce["Monto total"].round(2).tolist()
     df_yape_para_cruce["es_duplicado_bcp"] = df_yape_para_cruce["Monto total"].round(2).apply(
         lambda m: m in montos_bcp
     )
-    duplicados_removidos = df_yape_para_cruce["es_duplicado_bcp"].sum()
     df_yape_para_cruce = df_yape_para_cruce[df_yape_para_cruce["es_duplicado_bcp"] == False]
     df_yape_para_cruce = df_yape_para_cruce.drop(columns=["es_duplicado_bcp"])
 
@@ -641,7 +666,6 @@ if len(df_digital_base) > 0:
     yape_huerf_full = df_yape_check[~df_yape_check["Usado"]] if len(df_yape_check) > 0 else pd.DataFrame()
     bcp_huerf_full = df_bcp_check[~df_bcp_check["Usado"]] if len(df_bcp_check) > 0 else pd.DataFrame()
     
-    # DETECTAR POSIBLES RELACIONES ENTRE ALERTAS Y HUÉRFANOS
     def buscar_relacion(monto, izi_huerf, yape_huerf, bcp_huerf):
         relaciones = []
         if len(izi_huerf) > 0:
@@ -1008,34 +1032,27 @@ with col2:
     st.plotly_chart(fig, use_container_width=True)
 
 # ============================================================
-# FUNCIÓN: TABLA CON JUSTIFICACIÓN Y MOTIVO (para todas las alertas)
+# FUNCIÓN TABLA CON JUSTIFICACIÓN
 # ============================================================
 def tabla_con_justificacion(df, tipo_alerta, cols_base, key_suffix):
-    """Renderiza tabla con columnas de Justificación y Motivo editables"""
     if len(df) == 0:
         return None
-    
     df_display = df.copy().reset_index(drop=True)
-    # Crear ID único basado en el tipo de alerta
     if tipo_alerta == "caja":
         df_display["ID"] = df_display.apply(
             lambda r: f"caja_{r['Fecha']}_{r['Caja']}_{r['Op']}_{r['Doc']}", axis=1
         )
     else:
-        # Para huérfanos, usar hora + monto + tipo
         df_display["ID"] = df_display.apply(
             lambda r: f"{tipo_alerta}_{r.get('Hora_str', 'N')}_{r['Monto total']:.2f}", axis=1
         )
-    
     df_display["Justificación"] = df_display["ID"].apply(
         lambda i: justificaciones.get(i, {}).get("estado", "🟡 Pendiente")
     )
     df_display["Motivo"] = df_display["ID"].apply(
         lambda i: justificaciones.get(i, {}).get("motivo", "")
     )
-    
     cols_mostrar = cols_base + ["Justificación", "Motivo"]
-    
     edited_df = st.data_editor(
         df_display[cols_mostrar],
         column_config={
@@ -1052,8 +1069,7 @@ def tabla_con_justificacion(df, tipo_alerta, cols_base, key_suffix):
         hide_index=True, use_container_width=True,
         key=f"editor_{tipo_alerta}_{key_suffix}"
     )
-    
-    if st.button(f"💾 Guardar Justificaciones {tipo_alerta.upper()}", 
+    if st.button(f"💾 Guardar Justificaciones", 
                  type="primary", key=f"btn_save_{tipo_alerta}_{key_suffix}"):
         for idx, row in edited_df.iterrows():
             original_row = df_display.iloc[idx]
@@ -1067,7 +1083,6 @@ def tabla_con_justificacion(df, tipo_alerta, cols_base, key_suffix):
         guardar_historial(data)
         st.success("✅ Guardado")
         st.rerun()
-    
     return edited_df
 
 # ============================================================
@@ -1105,14 +1120,12 @@ with tab1:
             lambda i: justificaciones.get(i, {}).get("motivo", "")
         )
         st.markdown("**✏️ Edita la Justificación y Motivo. La columna 🔗 Posible Relación te ayuda a identificar cobros huérfanos con el mismo monto.**")
-        
         if "Posible Relación" in df_display.columns:
             cols_mostrar = ["Fecha", "Caja", "Op", "Doc", "Método", "Ref", "Monto", 
                            "Estado", "Posible Relación", "Justificación", "Motivo"]
         else:
             cols_mostrar = ["Fecha", "Caja", "Op", "Doc", "Método", "Ref", "Monto", 
                            "Estado", "Justificación", "Motivo"]
-        
         edited_df = st.data_editor(
             df_display[cols_mostrar],
             column_config={
