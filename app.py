@@ -56,21 +56,21 @@ st.markdown("""
     .semaforo-danger { border-left: 6px solid #DC2626; }
     .kpis-grid {
         display: grid;
-        grid-template-columns: repeat(6, 1fr);
-        gap: 16px;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 12px;
         margin-bottom: 24px;
     }
     .kpi-card {
-        background: white; padding: 22px; border-radius: 14px;
+        background: white; padding: 18px; border-radius: 14px;
         box-shadow: 0 2px 12px rgba(0,0,0,0.06);
         border-top: 4px solid #1E40AF;
         transition: all 0.3s;
     }
     .kpi-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
-    .kpi-icon { font-size: 24px; margin-bottom: 8px; }
-    .kpi-label { font-size: 11px; color: #6B7280; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
-    .kpi-value { font-size: 22px; font-weight: 800; color: #111827; margin-top: 6px; word-wrap: break-word; }
-    .kpi-sub { font-size: 11px; color: #9CA3AF; margin-top: 4px; }
+    .kpi-icon { font-size: 22px; margin-bottom: 6px; }
+    .kpi-label { font-size: 10px; color: #6B7280; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
+    .kpi-value { font-size: 18px; font-weight: 800; color: #111827; margin-top: 4px; word-wrap: break-word; }
+    .kpi-sub { font-size: 10px; color: #9CA3AF; margin-top: 4px; }
     .caja-card {
         background: white; border-radius: 16px; overflow: hidden;
         box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 20px;
@@ -155,8 +155,8 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] { background: white; border-radius: 10px; padding: 4px; }
     .stTabs [data-baseweb="tab"] { color: #4B5563 !important; }
     .stTabs [aria-selected="true"] { background: #EEF2FF !important; color: #4338CA !important; border-radius: 8px; }
-    @media (max-width: 1200px) { .kpis-grid { grid-template-columns: repeat(3, 1fr) !important; } }
-    @media (max-width: 768px) {
+    @media (max-width: 1400px) { .kpis-grid { grid-template-columns: repeat(4, 1fr) !important; } }
+    @media (max-width: 900px) {
         .header-premium { padding: 20px 24px; }
         .header-premium h1 { font-size: 22px; }
         .header-premium p { font-size: 12px; }
@@ -193,38 +193,66 @@ def cargar_historial():
     if os.path.exists(DB_FILE):
         with open(DB_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if "yape" not in data:
-                data["yape"] = []
+            if "yape" not in data: data["yape"] = []
+            if "bcp" not in data: data["bcp"] = []
+            if "justificaciones" not in data: data["justificaciones"] = {}
             return data
-    return {"ventas": [], "izipay": [], "yape": [], "cajas": []}
+    return {"ventas": [], "izipay": [], "yape": [], "bcp": [], "cajas": [], "justificaciones": {}}
 
 def guardar_historial(data):
-    if "yape" not in data:
-        data["yape"] = []
+    if "yape" not in data: data["yape"] = []
+    if "bcp" not in data: data["bcp"] = []
+    if "justificaciones" not in data: data["justificaciones"] = {}
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2, default=str)
 
 # ============================================================
-# FUNCIONES
+# FUNCIONES DE PARSEO
 # ============================================================
 def parsear_metodo_pago(texto_crudo):
-    if not texto_crudo: return ("Desconocido", None, None)
+    """
+    Extrae: método, hora, origen, número de operación
+    Ejemplos:
+        "Yape Ref: izi/00871015" → ("Yape", None, "IZI", "871015")
+        "Yape Ref: 14:27" → ("Yape", "14:27", None, None)
+        "Yape Ref: bcp/951722" → ("Yape", None, "BCP", "951722")
+    """
+    if not texto_crudo: return ("Desconocido", None, None, None)
     texto = texto_crudo.replace("\n", " ").strip()
+    texto_lower = texto.lower()
+    
+    # Método base
     metodo = "Otro"
-    if "Yape" in texto: metodo = "Yape"
-    elif "Tarjeta de\ncrédito" in texto_crudo or "Tarjeta de crédito" in texto: metodo = "Tarjeta de crédito"
-    elif "Tarjeta de\ndébito" in texto_crudo or "Tarjeta de débito" in texto: metodo = "Tarjeta de débito"
-    elif "Efectivo" in texto: metodo = "Efectivo"
+    if "yape" in texto_lower: metodo = "Yape"
+    elif "tarjeta de\ncrédito" in texto_crudo.lower() or "tarjeta de crédito" in texto_lower: metodo = "Tarjeta de crédito"
+    elif "tarjeta de\ndébito" in texto_crudo.lower() or "tarjeta de débito" in texto_lower: metodo = "Tarjeta de débito"
+    elif "efectivo" in texto_lower: metodo = "Efectivo"
+    
+    # Origen (izi, bcp, yape, plin, bim, iz)
     origen = None
-    m_o = re.search(r"(izi|bcp|yape|plin|bim)", texto.lower())
-    if m_o: origen = m_o.group(1).upper()
+    m_o = re.search(r"\b(izi?|bcp|yape|plin|bim)\b", texto_lower)
+    if m_o:
+        val = m_o.group(1).upper()
+        if val == "IZ": val = "IZI"
+        origen = val
+    
+    # Número de operación: buscar patrón "origen/NUMEROS" 
+    # Ejemplos: izi/00871015, iz/0116242, bcp/951722
+    num_op = None
+    m_num = re.search(r"(?:izi?|bcp|yape|plin|bim)[\s/]+(\d{4,})", texto_lower)
+    if m_num:
+        num_op = m_num.group(1).lstrip("0")  # quitar ceros a la izquierda
+    
+    # Hora (formato HH:MM) - solo si NO hay número de operación
     hora_ref = None
-    m_h = re.search(r"(\d{1,2}):(\d{2})", texto)
-    if m_h:
-        h, m = int(m_h.group(1)), int(m_h.group(2))
-        if 0 <= h < 24 and 0 <= m < 60:
-            hora_ref = f"{h:02d}:{m:02d}"
-    return (metodo, hora_ref, origen)
+    if num_op is None:
+        m_h = re.search(r"(\d{1,2}):(\d{2})", texto)
+        if m_h:
+            h, m = int(m_h.group(1)), int(m_h.group(2))
+            if 0 <= h < 24 and 0 <= m < 60:
+                hora_ref = f"{h:02d}:{m:02d}"
+    
+    return (metodo, hora_ref, origen, num_op)
 
 def extraer_ventas_pdf(pdf_file, nombre_caja):
     ventas = []
@@ -255,7 +283,7 @@ def extraer_ventas_pdf(pdf_file, nombre_caja):
                 for fila in tabla:
                     if fila and len(fila) >= 12 and fila[1] == "Venta":
                         try:
-                            metodo, hora_ref, origen = parsear_metodo_pago(fila[2] or "")
+                            metodo, hora_ref, origen, num_op = parsear_metodo_pago(fila[2] or "")
                             ventas.append({
                                 "fecha": resumen["fecha"],
                                 "caja": nombre_caja,
@@ -264,8 +292,10 @@ def extraer_ventas_pdf(pdf_file, nombre_caja):
                                 "metodo_pago": metodo,
                                 "hora_referencia": hora_ref,
                                 "origen_ref": origen,
+                                "num_operacion": num_op,
                                 "documento": fila[4],
                                 "monto_pagado": float(fila[10].replace(",", "")) if fila[10] else 0,
+                                "raw_metodo": (fila[2] or "").replace("\n", " ")
                             })
                         except: pass
     return resumen, ventas
@@ -277,35 +307,191 @@ def h2m(h):
         return a * 60 + b
     except: return None
 
-def conciliar(df_digital, df_izipay):
-    df_izipay = df_izipay.copy()
-    df_izipay["Usado"] = False
+def leer_yape(yape_file):
+    """Lee Excel de Yape con header dinámico"""
+    df_temp = pd.read_excel(yape_file, header=None)
+    header_row = None
+    for i, row in df_temp.iterrows():
+        valores = [str(v).lower() for v in row.values if pd.notna(v)]
+        if any("tipo" in v and "transac" in v for v in valores):
+            header_row = i
+            break
+    
+    if header_row is None:
+        return None
+    
+    df_y = pd.read_excel(yape_file, header=header_row)
+    col_fecha = col_monto = col_tipo = None
+    for c in df_y.columns:
+        cl = str(c).lower().strip()
+        if "fecha" in cl and col_fecha is None: col_fecha = c
+        if "monto" in cl and col_monto is None: col_monto = c
+        if "tipo" in cl and col_tipo is None: col_tipo = c
+    
+    if not (col_fecha and col_monto):
+        return None
+    
+    df_y[col_fecha] = pd.to_datetime(df_y[col_fecha], dayfirst=True, errors='coerce')
+    df_y = df_y.dropna(subset=[col_fecha])
+    if col_tipo:
+        df_y = df_y[df_y[col_tipo].astype(str).str.upper().str.contains("PAG", na=False)]
+    df_y[col_monto] = pd.to_numeric(df_y[col_monto], errors='coerce')
+    df_y = df_y.dropna(subset=[col_monto])
+    
+    return df_y, col_fecha, col_monto
+
+def leer_bcp(bcp_file):
+    """Lee Excel de BCP con detección de columnas"""
+    df = pd.read_excel(bcp_file)
+    col_fecha = col_monto = col_numop = col_desc = None
+    for c in df.columns:
+        cl = str(c).lower().strip()
+        if "fecha" in cl and col_fecha is None: col_fecha = c
+        if "monto" in cl and col_monto is None: col_monto = c
+        if ("numero" in cl or "número" in cl or "operac" in cl) and col_numop is None: col_numop = c
+        if "descrip" in cl and col_desc is None: col_desc = c
+    
+    if not (col_fecha and col_monto):
+        return None
+    
+    df[col_fecha] = pd.to_datetime(df[col_fecha], dayfirst=True, errors='coerce')
+    df = df.dropna(subset=[col_fecha])
+    df[col_monto] = pd.to_numeric(df[col_monto], errors='coerce')
+    df = df.dropna(subset=[col_monto])
+    # Solo ingresos (montos positivos)
+    df = df[df[col_monto] > 0]
+    
+    return df, col_fecha, col_monto, col_numop, col_desc
+
+def conciliar_multi(df_digital, df_izipay, df_yape, df_bcp):
+    """
+    Concilia ventas contra Izipay, Yape y BCP.
+    Prioriza número de operación. Si no, hora + monto.
+    """
+    df_izipay = df_izipay.copy() if len(df_izipay) > 0 else pd.DataFrame()
+    df_yape = df_yape.copy() if len(df_yape) > 0 else pd.DataFrame()
+    df_bcp = df_bcp.copy() if len(df_bcp) > 0 else pd.DataFrame()
+    
+    if len(df_izipay) > 0: df_izipay["Usado"] = False
+    if len(df_yape) > 0: df_yape["Usado"] = False
+    if len(df_bcp) > 0: df_bcp["Usado"] = False
+    
     resultados = []
+    
     for _, v in df_digital.iterrows():
-        hm = h2m(v["hora_referencia"])
-        match, diff = None, 999
-        for i, iz in df_izipay[~df_izipay["Usado"]].iterrows():
-            if abs(iz["Monto total"] - v["monto_pagado"]) <= 0.10:
-                if hm is not None:
-                    d = abs(iz["Hora_minutos"] - hm)
-                    if d <= 10 and d < diff:
-                        match, diff = i, d
-                elif match is None:
-                    match, diff = i, -1
-        estado = "🚨 SIN COBRO"
-        izi_h, izi_m = "-", "-"
-        if match is not None:
-            df_izipay.at[match, "Usado"] = True
-            estado = "✅ OK" if diff <= 2 else f"⚠️ ±{diff}min"
-            izi_h = df_izipay.loc[match, "Hora_str"]
-            izi_m = f"S/ {df_izipay.loc[match, 'Monto total']:.2f}"
+        num_op = v.get("num_operacion")
+        hm = h2m(v.get("hora_referencia"))
+        monto = v["monto_pagado"]
+        
+        encontrado = None  # (fuente, hora_str, monto_encontrado, medio)
+        
+        # ==========================================
+        # PRIORIDAD 1: Buscar por Nº OPERACIÓN
+        # ==========================================
+        if num_op:
+            # Izipay: buscar en cualquier columna de número
+            if len(df_izipay) > 0 and encontrado is None:
+                for idx, row in df_izipay[~df_izipay["Usado"]].iterrows():
+                    # Comparar número de operación (buscar en todas las columnas texto)
+                    for col in df_izipay.columns:
+                        val = str(row.get(col, "")).lstrip("0")
+                        if val == num_op and abs(row["Monto total"] - monto) <= 0.10:
+                            df_izipay.at[idx, "Usado"] = True
+                            encontrado = ("Izipay", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "-"))
+                            break
+                    if encontrado: break
+            
+            # Yape
+            if len(df_yape) > 0 and encontrado is None:
+                for idx, row in df_yape[~df_yape["Usado"]].iterrows():
+                    for col in df_yape.columns:
+                        val = str(row.get(col, "")).lstrip("0")
+                        if val == num_op and abs(row["Monto total"] - monto) <= 0.10:
+                            df_yape.at[idx, "Usado"] = True
+                            encontrado = ("Yape", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "Yape"))
+                            break
+                    if encontrado: break
+            
+            # BCP
+            if len(df_bcp) > 0 and encontrado is None:
+                for idx, row in df_bcp[~df_bcp["Usado"]].iterrows():
+                    num_bcp = str(row.get("num_operacion", "")).lstrip("0")
+                    if num_bcp == num_op and abs(row["Monto total"] - monto) <= 0.10:
+                        df_bcp.at[idx, "Usado"] = True
+                        encontrado = ("BCP", row.get("Hora_str", "-"), row["Monto total"], row.get("descripcion", "BCP"))
+                        break
+        
+        # ==========================================
+        # PRIORIDAD 2: Fallback por HORA + MONTO
+        # ==========================================
+        if encontrado is None and hm is not None:
+            # Izipay
+            if len(df_izipay) > 0:
+                for idx, row in df_izipay[~df_izipay["Usado"]].iterrows():
+                    if abs(row["Monto total"] - monto) <= 0.10 and abs(row["Hora_minutos"] - hm) <= 10:
+                        df_izipay.at[idx, "Usado"] = True
+                        encontrado = ("Izipay", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "-"))
+                        break
+            # Yape
+            if encontrado is None and len(df_yape) > 0:
+                for idx, row in df_yape[~df_yape["Usado"]].iterrows():
+                    if abs(row["Monto total"] - monto) <= 0.10 and abs(row["Hora_minutos"] - hm) <= 10:
+                        df_yape.at[idx, "Usado"] = True
+                        encontrado = ("Yape", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "Yape"))
+                        break
+            # BCP
+            if encontrado is None and len(df_bcp) > 0:
+                for idx, row in df_bcp[~df_bcp["Usado"]].iterrows():
+                    if abs(row["Monto total"] - monto) <= 0.10 and abs(row["Hora_minutos"] - hm) <= 10:
+                        df_bcp.at[idx, "Usado"] = True
+                        encontrado = ("BCP", row.get("Hora_str", "-"), row["Monto total"], row.get("descripcion", "BCP"))
+                        break
+        
+        # ==========================================
+        # PRIORIDAD 3: Solo por MONTO (último recurso)
+        # ==========================================
+        if encontrado is None:
+            if len(df_izipay) > 0:
+                for idx, row in df_izipay[~df_izipay["Usado"]].iterrows():
+                    if abs(row["Monto total"] - monto) <= 0.10:
+                        df_izipay.at[idx, "Usado"] = True
+                        encontrado = ("Izipay*", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "-"))
+                        break
+            if encontrado is None and len(df_yape) > 0:
+                for idx, row in df_yape[~df_yape["Usado"]].iterrows():
+                    if abs(row["Monto total"] - monto) <= 0.10:
+                        df_yape.at[idx, "Usado"] = True
+                        encontrado = ("Yape*", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "Yape"))
+                        break
+            if encontrado is None and len(df_bcp) > 0:
+                for idx, row in df_bcp[~df_bcp["Usado"]].iterrows():
+                    if abs(row["Monto total"] - monto) <= 0.10:
+                        df_bcp.at[idx, "Usado"] = True
+                        encontrado = ("BCP*", row.get("Hora_str", "-"), row["Monto total"], row.get("descripcion", "BCP"))
+                        break
+        
+        # Registrar resultado
+        if encontrado:
+            fuente, hora_e, monto_e, medio_e = encontrado
+            estado = "✅ OK"
+        else:
+            fuente, hora_e, monto_e, medio_e = "-", "-", "-", "-"
+            estado = "🚨 SIN COBRO"
+        
         resultados.append({
             "Fecha": v.get("fecha", ""), "Caja": v["caja"], "Op": v["n_op"],
             "Doc": v["documento"], "Método": v["metodo_pago"],
-            "Hora Ref": v["hora_referencia"] or "-", "Monto": v["monto_pagado"],
-            "Estado": estado, "Izipay Hora": izi_h, "Izipay Monto": izi_m
+            "Ref": v.get("raw_metodo", ""),
+            "N° Op": num_op or "-",
+            "Hora Ref": v["hora_referencia"] or "-", 
+            "Monto": v["monto_pagado"],
+            "Estado": estado,
+            "Fuente": fuente,
+            "Cobro Hora": hora_e,
+            "Cobro Monto": f"S/ {monto_e:.2f}" if isinstance(monto_e, (int, float)) else monto_e,
         })
-    return pd.DataFrame(resultados), df_izipay
+    
+    return pd.DataFrame(resultados), df_izipay, df_yape, df_bcp
 
 # ============================================================
 # HEADER
@@ -334,10 +520,11 @@ with st.sidebar:
     
     pdfs_uploaded = st.file_uploader("📄 PDFs de Caja", type=["pdf"], accept_multiple_files=True)
     excel_uploaded = st.file_uploader("📊 Excel de Izipay", type=["xlsx", "xls"], key="izipay_up")
-    yape_uploaded = st.file_uploader("📱 Excel de Yape (opcional)", type=["xlsx", "xls"], key="yape_up")
+    yape_uploaded = st.file_uploader("📱 Excel de Yape", type=["xlsx", "xls"], key="yape_up")
+    bcp_uploaded = st.file_uploader("🏦 Excel de BCP", type=["xlsx", "xls"], key="bcp_up")
     
     if st.button("💾 Procesar y Guardar", type="primary", use_container_width=True):
-        if pdfs_uploaded or excel_uploaded or yape_uploaded:
+        if pdfs_uploaded or excel_uploaded or yape_uploaded or bcp_uploaded:
             data = cargar_historial()
             
             if pdfs_uploaded:
@@ -373,59 +560,43 @@ with st.sidebar:
             
             if yape_uploaded:
                 try:
-                    # Buscar automáticamente la fila del header
-                    df_temp = pd.read_excel(yape_uploaded, header=None)
-                    header_row = None
-                    for i, row in df_temp.iterrows():
-                        valores = [str(v).lower() for v in row.values if pd.notna(v)]
-                        if any("tipo" in v and "transac" in v for v in valores):
-                            header_row = i
-                            break
-                    
-                    if header_row is None:
-                        st.error("❌ No se encontró el encabezado en el Excel de Yape")
+                    result = leer_yape(yape_uploaded)
+                    if result is None:
+                        st.error("❌ No se pudo leer Yape")
                     else:
-                        df_y = pd.read_excel(yape_uploaded, header=header_row)
-                        st.info(f"📋 Header detectado en fila {header_row}. Columnas: {list(df_y.columns)}")
-                        
-                        col_fecha = None
-                        col_monto = None
-                        col_origen = None
-                        col_tipo = None
-                        for c in df_y.columns:
-                            cl = str(c).lower().strip()
-                            if "fecha" in cl and col_fecha is None: col_fecha = c
-                            if "monto" in cl and col_monto is None: col_monto = c
-                            if "origen" in cl and col_origen is None: col_origen = c
-                            if "tipo" in cl and col_tipo is None: col_tipo = c
-                        
-                        if col_fecha and col_monto:
-                            df_y[col_fecha] = pd.to_datetime(df_y[col_fecha], dayfirst=True, errors='coerce')
-                            df_y = df_y.dropna(subset=[col_fecha])
-                            
-                            if col_tipo:
-                                antes = len(df_y)
-                                df_y = df_y[df_y[col_tipo].astype(str).str.upper().str.contains("PAG", na=False)]
-                                st.info(f"✅ Filas 'TE PAGÓ': {len(df_y)} de {antes}")
-                            
-                            df_y[col_monto] = pd.to_numeric(df_y[col_monto], errors='coerce')
-                            df_y = df_y.dropna(subset=[col_monto])
-                            
-                            fechas_nuevas_y = df_y[col_fecha].dt.date.unique()
-                            data["yape"] = [y for y in data["yape"] 
-                                           if pd.to_datetime(y["fecha_hora"]).date() not in fechas_nuevas_y]
-                            
-                            for _, row in df_y.iterrows():
-                                data["yape"].append({
-                                    "fecha_hora": row[col_fecha].isoformat(),
-                                    "origen": str(row[col_origen]) if col_origen else "N/A",
-                                    "monto": float(row[col_monto]),
-                                })
-                            st.success(f"✅ Yape: {len(df_y)} transacciones cargadas")
-                        else:
-                            st.error(f"❌ Faltan columnas Fecha/Monto. Encontré: {list(df_y.columns)}")
+                        df_y, col_fecha, col_monto = result
+                        fechas_nuevas_y = df_y[col_fecha].dt.date.unique()
+                        data["yape"] = [y for y in data["yape"] 
+                                       if pd.to_datetime(y["fecha_hora"]).date() not in fechas_nuevas_y]
+                        for _, row in df_y.iterrows():
+                            data["yape"].append({
+                                "fecha_hora": row[col_fecha].isoformat(),
+                                "monto": float(row[col_monto]),
+                            })
+                        st.success(f"✅ Yape: {len(df_y)} trans")
                 except Exception as e:
                     st.error(f"❌ Error Yape: {str(e)}")
+            
+            if bcp_uploaded:
+                try:
+                    result = leer_bcp(bcp_uploaded)
+                    if result is None:
+                        st.error("❌ No se pudo leer BCP")
+                    else:
+                        df_b, col_fecha, col_monto, col_numop, col_desc = result
+                        fechas_nuevas_b = df_b[col_fecha].dt.date.unique()
+                        data["bcp"] = [b for b in data["bcp"] 
+                                      if pd.to_datetime(b["fecha_hora"]).date() not in fechas_nuevas_b]
+                        for _, row in df_b.iterrows():
+                            data["bcp"].append({
+                                "fecha_hora": row[col_fecha].isoformat(),
+                                "monto": float(row[col_monto]),
+                                "num_operacion": str(row[col_numop]) if col_numop else "",
+                                "descripcion": str(row[col_desc]) if col_desc else "",
+                            })
+                        st.success(f"✅ BCP: {len(df_b)} trans (ingresos)")
+                except Exception as e:
+                    st.error(f"❌ Error BCP: {str(e)}")
             
             guardar_historial(data)
             st.balloons()
@@ -437,7 +608,7 @@ with st.sidebar:
     
     if st.button("🗑️ Limpiar Historial", use_container_width=True, type="secondary"):
         if st.session_state.get("confirmar", False):
-            guardar_historial({"ventas": [], "izipay": [], "yape": [], "cajas": []})
+            guardar_historial({"ventas": [], "izipay": [], "yape": [], "bcp": [], "cajas": [], "justificaciones": {}})
             st.session_state.confirmar = False
             st.rerun()
         else:
@@ -451,16 +622,19 @@ data = cargar_historial()
 df_ventas = pd.DataFrame(data["ventas"])
 df_izipay_raw = pd.DataFrame(data["izipay"])
 df_yape_raw = pd.DataFrame(data.get("yape", []))
+df_bcp_raw = pd.DataFrame(data.get("bcp", []))
 lista_cajas = data.get("cajas", [])
+justificaciones = data.get("justificaciones", {})
 
 if len(df_ventas) == 0 and len(df_izipay_raw) == 0:
     st.info("👈 **Comienza subiendo tus archivos desde el panel izquierdo**")
     st.markdown("""
     ### 📋 Instrucciones:
     1. Sube los **PDFs de caja** (uno por cajera)
-    2. Sube el **Excel de Izipay** del día
-    3. (Opcional) Sube el **Excel de Yape**
-    4. Presiona **"Procesar y Guardar"**
+    2. Sube el **Excel de Izipay**
+    3. Sube el **Excel de Yape**
+    4. Sube el **Excel de BCP** (opcional)
+    5. Presiona **"Procesar y Guardar"**
     """)
     st.stop()
 
@@ -483,8 +657,17 @@ if len(df_yape_raw) > 0:
     df_yape_raw["Hora_str"] = df_yape_raw["fecha_hora"].dt.strftime("%H:%M")
     df_yape_raw["Hora_minutos"] = df_yape_raw["fecha_hora"].dt.hour * 60 + df_yape_raw["fecha_hora"].dt.minute
     df_yape_raw["Monto total"] = df_yape_raw["monto"]
-    df_yape_raw["Medio de cobro"] = df_yape_raw["origen"]
-    df_yape_raw["Estado de venta"] = "Realizado"
+    df_yape_raw["Medio de cobro"] = "Yape"
+
+# Preparar BCP
+if len(df_bcp_raw) > 0:
+    df_bcp_raw["fecha_hora"] = pd.to_datetime(df_bcp_raw["fecha_hora"])
+    df_bcp_raw["Fecha"] = df_bcp_raw["fecha_hora"].dt.date.astype(str)
+    df_bcp_raw["Hora"] = df_bcp_raw["fecha_hora"].dt.hour
+    df_bcp_raw["Hora_str"] = df_bcp_raw["fecha_hora"].dt.strftime("%H:%M")
+    df_bcp_raw["Hora_minutos"] = df_bcp_raw["fecha_hora"].dt.hour * 60 + df_bcp_raw["fecha_hora"].dt.minute
+    df_bcp_raw["Monto total"] = df_bcp_raw["monto"]
+    df_bcp_raw["Medio de cobro"] = "BCP"
 
 # ============================================================
 # FILTROS
@@ -496,7 +679,8 @@ with col1:
     fechas_v = sorted(df_ventas["fecha"].unique()) if len(df_ventas) > 0 else []
     fechas_i = sorted(df_izipay_raw["Fecha"].unique()) if len(df_izipay_raw) > 0 else []
     fechas_y = sorted(df_yape_raw["Fecha"].unique()) if len(df_yape_raw) > 0 else []
-    fechas_disp = sorted(set(list(fechas_v) + list(fechas_i) + list(fechas_y)))
+    fechas_b = sorted(df_bcp_raw["Fecha"].unique()) if len(df_bcp_raw) > 0 else []
+    fechas_disp = sorted(set(list(fechas_v) + list(fechas_i) + list(fechas_y) + list(fechas_b)))
     fechas_sel = st.multiselect("📅 Fechas", fechas_disp, default=fechas_disp)
 
 with col2:
@@ -517,40 +701,30 @@ df_ventas_base = df_ventas[
 
 df_izipay_base = df_izipay_raw[df_izipay_raw["Fecha"].isin(fechas_sel)] if len(df_izipay_raw) > 0 else df_izipay_raw
 df_yape_base = df_yape_raw[df_yape_raw["Fecha"].isin(fechas_sel)] if len(df_yape_raw) > 0 else df_yape_raw
+df_bcp_base = df_bcp_raw[df_bcp_raw["Fecha"].isin(fechas_sel)] if len(df_bcp_raw) > 0 else df_bcp_raw
 cajas_filt = [c for c in lista_cajas if c["fecha"] in fechas_sel and c["caja"] in cajas_sel]
 
 # ============================================================
-# CONCILIACIÓN UNIFICADA (Izipay + Yape juntos)
+# CONCILIACIÓN MULTI-FUENTE
 # ============================================================
 df_digital_base = df_ventas_base[df_ventas_base["metodo_pago"].isin(
     ["Yape", "Tarjeta de crédito", "Tarjeta de débito"]
 )].copy()
 
-frames_cobros = []
-if len(df_izipay_base) > 0:
-    tmp_izi = df_izipay_base.copy()
-    tmp_izi["Fuente"] = "Izipay"
-    frames_cobros.append(tmp_izi)
-if len(df_yape_base) > 0:
-    tmp_yape = df_yape_base.copy()
-    tmp_yape["Fuente"] = "Yape"
-    frames_cobros.append(tmp_yape)
-
-if frames_cobros:
-    df_cobros_all = pd.concat(frames_cobros, ignore_index=True)
-else:
-    df_cobros_all = pd.DataFrame()
-
-if len(df_digital_base) > 0 and len(df_cobros_all) > 0:
-    df_res_full, df_cobros_check = conciliar(df_digital_base, df_cobros_all)
+if len(df_digital_base) > 0:
+    df_res_full, df_izi_check, df_yape_check, df_bcp_check = conciliar_multi(
+        df_digital_base, df_izipay_base, df_yape_base, df_bcp_base
+    )
     alertas_caja_full = df_res_full[df_res_full["Estado"].str.contains("SIN COBRO")]
-    izipay_huerf_full = df_cobros_check[(~df_cobros_check["Usado"]) & (df_cobros_check["Fuente"] == "Izipay")] if "Fuente" in df_cobros_check.columns else pd.DataFrame()
-    yape_huerf_full = df_cobros_check[(~df_cobros_check["Usado"]) & (df_cobros_check["Fuente"] == "Yape")] if "Fuente" in df_cobros_check.columns else pd.DataFrame()
+    izipay_huerf_full = df_izi_check[~df_izi_check["Usado"]] if len(df_izi_check) > 0 else pd.DataFrame()
+    yape_huerf_full = df_yape_check[~df_yape_check["Usado"]] if len(df_yape_check) > 0 else pd.DataFrame()
+    bcp_huerf_full = df_bcp_check[~df_bcp_check["Usado"]] if len(df_bcp_check) > 0 else pd.DataFrame()
 else:
     df_res_full = pd.DataFrame()
     alertas_caja_full = pd.DataFrame()
     izipay_huerf_full = pd.DataFrame()
     yape_huerf_full = pd.DataFrame()
+    bcp_huerf_full = pd.DataFrame()
 
 # ============================================================
 # APLICAR FILTRO DE MÉTODO
@@ -561,28 +735,13 @@ df_digital = df_ventas_f[df_ventas_f["metodo_pago"].isin(["Yape", "Tarjeta de cr
 alertas_caja = alertas_caja_full[alertas_caja_full["Método"].isin(metodos_sel)] if len(alertas_caja_full) > 0 else pd.DataFrame()
 df_res = df_res_full[df_res_full["Método"].isin(metodos_sel)] if len(df_res_full) > 0 else pd.DataFrame()
 
-if "Yape" in metodos_sel:
-    izipay_huerf = izipay_huerf_full
-    yape_huerf = yape_huerf_full
-else:
-    izipay_huerf = izipay_huerf_full[izipay_huerf_full["Medio de cobro"] != "sQR"] if len(izipay_huerf_full) > 0 else pd.DataFrame()
-    yape_huerf = pd.DataFrame()
+izipay_huerf = izipay_huerf_full
+yape_huerf = yape_huerf_full if "Yape" in metodos_sel else pd.DataFrame()
+bcp_huerf = bcp_huerf_full if "Yape" in metodos_sel else pd.DataFrame()
 
-if len(df_izipay_base) > 0:
-    quiere_yape = "Yape" in metodos_sel
-    quiere_tarjeta = any(m in metodos_sel for m in ["Tarjeta de crédito", "Tarjeta de débito"])
-    if quiere_yape and quiere_tarjeta:
-        df_izipay_f = df_izipay_base
-    elif quiere_yape:
-        df_izipay_f = df_izipay_base[df_izipay_base["Medio de cobro"] == "sQR"]
-    elif quiere_tarjeta:
-        df_izipay_f = df_izipay_base[df_izipay_base["Medio de cobro"] != "sQR"]
-    else:
-        df_izipay_f = pd.DataFrame()
-else:
-    df_izipay_f = df_izipay_base
-
+df_izipay_f = df_izipay_base
 df_yape_f = df_yape_base if "Yape" in metodos_sel else pd.DataFrame()
+df_bcp_f = df_bcp_base if "Yape" in metodos_sel else pd.DataFrame()
 
 # ============================================================
 # CÁLCULOS FINALES
@@ -591,13 +750,14 @@ efectivo_total = df_ventas_f[df_ventas_f["metodo_pago"] == "Efectivo"]["monto_pa
 digital_total = df_digital["monto_pagado"].sum() if len(df_digital) > 0 else 0
 izipay_total = df_izipay_f["Monto total"].sum() if len(df_izipay_f) > 0 else 0
 yape_total = df_yape_f["Monto total"].sum() if len(df_yape_f) > 0 else 0
+bcp_total = df_bcp_f["Monto total"].sum() if len(df_bcp_f) > 0 else 0
 ingreso_total = df_ventas_f["monto_pagado"].sum() if len(df_ventas_f) > 0 else 0
-diferencia = digital_total - (izipay_total + yape_total)
 
 monto_sospechoso = alertas_caja["Monto"].sum() if len(alertas_caja) > 0 else 0
 monto_no_reg_izi = izipay_huerf["Monto total"].sum() if len(izipay_huerf) > 0 else 0
 monto_no_reg_yape = yape_huerf["Monto total"].sum() if len(yape_huerf) > 0 else 0
-monto_no_reg = monto_no_reg_izi + monto_no_reg_yape
+monto_no_reg_bcp = bcp_huerf["Monto total"].sum() if len(bcp_huerf) > 0 else 0
+monto_no_reg = monto_no_reg_izi + monto_no_reg_yape + monto_no_reg_bcp
 riesgo_total = monto_sospechoso + monto_no_reg
 
 # ============================================================
@@ -628,7 +788,7 @@ st.markdown(f"""
 # KPIs
 # ============================================================
 pct_efectivo = (efectivo_total/ingreso_total*100) if ingreso_total > 0 else 0
-total_alertas = len(alertas_caja) + len(izipay_huerf) + len(yape_huerf)
+total_alertas = len(alertas_caja) + len(izipay_huerf) + len(yape_huerf) + len(bcp_huerf)
 
 kpis_html = f"""
 <div class="kpis-grid">
@@ -636,37 +796,43 @@ kpis_html = f"""
         <div class="kpi-icon">💰</div>
         <div class="kpi-label">Ingreso Total</div>
         <div class="kpi-value">S/ {ingreso_total:,.2f}</div>
-        <div class="kpi-sub">{len(df_ventas_f)} transacciones</div>
+        <div class="kpi-sub">{len(df_ventas_f)} trans</div>
     </div>
     <div class="kpi-card" style="border-top-color:#059669;">
         <div class="kpi-icon">💵</div>
         <div class="kpi-label">Efectivo</div>
         <div class="kpi-value">S/ {efectivo_total:,.2f}</div>
-        <div class="kpi-sub">{pct_efectivo:.1f}% del total</div>
+        <div class="kpi-sub">{pct_efectivo:.1f}%</div>
     </div>
     <div class="kpi-card" style="border-top-color:#7C3AED;">
         <div class="kpi-icon">📱</div>
         <div class="kpi-label">Digital (Caja)</div>
         <div class="kpi-value">S/ {digital_total:,.2f}</div>
-        <div class="kpi-sub">{len(df_digital)} transacciones</div>
+        <div class="kpi-sub">{len(df_digital)} trans</div>
     </div>
     <div class="kpi-card" style="border-top-color:#0891B2;">
         <div class="kpi-icon">💳</div>
-        <div class="kpi-label">Cobrado Izipay</div>
+        <div class="kpi-label">Izipay</div>
         <div class="kpi-value">S/ {izipay_total:,.2f}</div>
-        <div class="kpi-sub">{len(df_izipay_f)} transacciones</div>
+        <div class="kpi-sub">{len(df_izipay_f)} trans</div>
     </div>
     <div class="kpi-card" style="border-top-color:#EC4899;">
         <div class="kpi-icon">📲</div>
-        <div class="kpi-label">Cobrado Yape</div>
+        <div class="kpi-label">Yape</div>
         <div class="kpi-value">S/ {yape_total:,.2f}</div>
-        <div class="kpi-sub">{len(df_yape_f)} transacciones</div>
+        <div class="kpi-sub">{len(df_yape_f)} trans</div>
+    </div>
+    <div class="kpi-card" style="border-top-color:#F97316;">
+        <div class="kpi-icon">🏦</div>
+        <div class="kpi-label">BCP</div>
+        <div class="kpi-value">S/ {bcp_total:,.2f}</div>
+        <div class="kpi-sub">{len(df_bcp_f)} trans</div>
     </div>
     <div class="kpi-card" style="border-top-color:#DC2626;">
         <div class="kpi-icon">🚨</div>
         <div class="kpi-label">Alertas</div>
         <div class="kpi-value">{total_alertas}</div>
-        <div class="kpi-sub">S/ {riesgo_total:,.2f} en riesgo</div>
+        <div class="kpi-sub">S/ {riesgo_total:,.2f}</div>
     </div>
 </div>
 """
@@ -809,36 +975,99 @@ with col1:
         st.plotly_chart(fig, use_container_width=True)
 
 with col2:
-    izi_qr = df_izipay_f[df_izipay_f["Medio de cobro"] == "sQR"]["Monto total"].sum() if len(df_izipay_f) > 0 else 0
-    izi_tar = df_izipay_f[df_izipay_f["Medio de cobro"] != "sQR"]["Monto total"].sum() if len(df_izipay_f) > 0 else 0
-    caja_yape = df_digital[df_digital["metodo_pago"] == "Yape"]["monto_pagado"].sum()
-    caja_tar = df_digital[df_digital["metodo_pago"].str.contains("Tarjeta")]["monto_pagado"].sum()
     fig = go.Figure(data=[
-        go.Bar(name='🏪 Caja', x=["Yape/QR", "Tarjetas"], y=[caja_yape, caja_tar],
-               marker_color="#1E40AF", text=[f"S/{caja_yape:.2f}", f"S/{caja_tar:.2f}"], textposition='outside'),
-        go.Bar(name='💳 Izipay', x=["Yape/QR", "Tarjetas"], y=[izi_qr, izi_tar],
-               marker_color="#DC2626", text=[f"S/{izi_qr:.2f}", f"S/{izi_tar:.2f}"], textposition='outside')
+        go.Bar(name='💳 Izipay', x=["Cobros"], y=[izipay_total], marker_color="#0891B2",
+               text=[f"S/{izipay_total:.0f}"], textposition='outside'),
+        go.Bar(name='📲 Yape', x=["Cobros"], y=[yape_total], marker_color="#EC4899",
+               text=[f"S/{yape_total:.0f}"], textposition='outside'),
+        go.Bar(name='🏦 BCP', x=["Cobros"], y=[bcp_total], marker_color="#F97316",
+               text=[f"S/{bcp_total:.0f}"], textposition='outside'),
     ])
-    fig.update_layout(title="<b>⚖️ Conciliación: Caja vs Izipay</b>", barmode='group',
+    fig.update_layout(title="<b>⚖️ Comparativo de Canales</b>", barmode='group',
                      plot_bgcolor="white", paper_bgcolor="white", height=400)
     st.plotly_chart(fig, use_container_width=True)
 
 # ============================================================
-# ALERTAS
+# ALERTAS CON JUSTIFICACIÓN
 # ============================================================
 st.markdown('<div class="section-title">🚨 Detalle de Alertas</div>', unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     f"🚨 Caja sin Cobro ({len(alertas_caja)})",
     f"⚠️ Izipay sin Caja ({len(izipay_huerf)})",
     f"📲 Yape sin Caja ({len(yape_huerf)})",
+    f"🏦 BCP sin Caja ({len(bcp_huerf)})",
     f"📋 Todas ({len(df_res)})"
 ])
 
 with tab1:
     if len(alertas_caja) > 0:
         st.error(f"⚠️ **{len(alertas_caja)} ventas sospechosas** por **S/ {monto_sospechoso:.2f}**")
-        st.dataframe(alertas_caja, use_container_width=True, hide_index=True)
+        
+        col_f1, col_f2 = st.columns([1, 3])
+        with col_f1:
+            cajas_alerta = ["Todas"] + sorted(alertas_caja["Caja"].unique().tolist())
+            filtro_caja = st.selectbox("🏪 Filtrar por caja", cajas_alerta, key="filtro_caja_alerta")
+        
+        if filtro_caja != "Todas":
+            df_display = alertas_caja[alertas_caja["Caja"] == filtro_caja].copy()
+        else:
+            df_display = alertas_caja.copy()
+        
+        df_display = df_display.reset_index(drop=True)
+        df_display["ID"] = df_display.apply(
+            lambda r: f"{r['Fecha']}_{r['Caja']}_{r['Op']}_{r['Doc']}", axis=1
+        )
+        df_display["Justificación"] = df_display["ID"].apply(
+            lambda i: justificaciones.get(i, {}).get("estado", "🟡 Pendiente")
+        )
+        df_display["Motivo"] = df_display["ID"].apply(
+            lambda i: justificaciones.get(i, {}).get("motivo", "")
+        )
+        
+        st.markdown("**✏️ Edita la Justificación y Motivo. Presiona 'Guardar' al terminar.**")
+        
+        edited_df = st.data_editor(
+            df_display[["Fecha", "Caja", "Op", "Doc", "Método", "Ref", "Monto", 
+                       "Estado", "Justificación", "Motivo"]],
+            column_config={
+                "Justificación": st.column_config.SelectboxColumn(
+                    "Justificación", width="medium",
+                    options=["🟡 Pendiente", "🟢 Justificado", "🔴 Fraude confirmado"],
+                    required=True,
+                ),
+                "Motivo": st.column_config.TextColumn("Motivo", width="large"),
+                "Monto": st.column_config.NumberColumn("Monto", format="S/ %.2f"),
+            },
+            disabled=["Fecha", "Caja", "Op", "Doc", "Método", "Ref", "Monto", "Estado"],
+            hide_index=True, use_container_width=True,
+            key=f"editor_alertas_{filtro_caja}"
+        )
+        
+        col_g1, col_g2 = st.columns([1, 4])
+        with col_g1:
+            if st.button("💾 Guardar Justificaciones", type="primary", use_container_width=True):
+                for idx, row in edited_df.iterrows():
+                    original_row = df_display.iloc[idx]
+                    id_alerta = original_row["ID"]
+                    justificaciones[id_alerta] = {
+                        "estado": row["Justificación"],
+                        "motivo": row["Motivo"],
+                        "fecha_registro": datetime.now().isoformat()
+                    }
+                data["justificaciones"] = justificaciones
+                guardar_historial(data)
+                st.success("✅ Guardado")
+                st.rerun()
+        
+        st.markdown("---")
+        col_r1, col_r2, col_r3 = st.columns(3)
+        pendientes = (edited_df["Justificación"] == "🟡 Pendiente").sum()
+        justificadas = (edited_df["Justificación"] == "🟢 Justificado").sum()
+        fraudes = (edited_df["Justificación"] == "🔴 Fraude confirmado").sum()
+        with col_r1: st.metric("🟡 Pendientes", pendientes)
+        with col_r2: st.metric("🟢 Justificadas", justificadas)
+        with col_r3: st.metric("🔴 Fraudes", fraudes)
     else:
         st.success("✅ No hay ventas sin cobro")
 
@@ -848,42 +1077,86 @@ with tab2:
         st.dataframe(izipay_huerf[["Hora_str", "Medio de cobro", "Monto total", "Estado de venta"]],
                      use_container_width=True, hide_index=True)
     else:
-        st.success("✅ Todos los cobros Izipay están registrados")
+        st.success("✅ Todos los cobros Izipay registrados")
 
 with tab3:
     if len(yape_huerf) > 0:
         st.warning(f"⚠️ **{len(yape_huerf)} cobros Yape sin registrar** por **S/ {monto_no_reg_yape:.2f}**")
-        st.dataframe(yape_huerf[["Hora_str", "Medio de cobro", "Monto total"]],
+        st.dataframe(yape_huerf[["Hora_str", "Monto total"]],
                      use_container_width=True, hide_index=True)
     else:
-        st.success("✅ Todos los cobros Yape están registrados")
+        st.success("✅ Todos los cobros Yape registrados")
 
 with tab4:
+    if len(bcp_huerf) > 0:
+        st.warning(f"⚠️ **{len(bcp_huerf)} cobros BCP sin registrar** por **S/ {monto_no_reg_bcp:.2f}**")
+        cols_bcp = ["Hora_str", "Monto total"]
+        if "descripcion" in bcp_huerf.columns: cols_bcp.append("descripcion")
+        if "num_operacion" in bcp_huerf.columns: cols_bcp.append("num_operacion")
+        st.dataframe(bcp_huerf[cols_bcp], use_container_width=True, hide_index=True)
+    else:
+        st.success("✅ Todos los cobros BCP registrados")
+
+with tab5:
     if len(df_res) > 0:
         st.dataframe(df_res, use_container_width=True, hide_index=True)
 
 # ============================================================
-# DESCARGAR
+# DESCARGAR CON FILTRO POR CAJA
 # ============================================================
 st.markdown('<div class="section-title">📥 Descargar Reportes</div>', unsafe_allow_html=True)
-col1, col2, col3, col4 = st.columns(4)
+
+col_f, _ = st.columns([1, 3])
+with col_f:
+    opciones_caja = ["Todas"] + sorted(df_ventas["caja"].unique().tolist()) if len(df_ventas) > 0 else ["Todas"]
+    caja_download = st.selectbox("🏪 Filtrar descarga por caja", opciones_caja, key="caja_download")
+
+if caja_download != "Todas":
+    df_ventas_dl = df_ventas_f[df_ventas_f["caja"] == caja_download] if len(df_ventas_f) > 0 else pd.DataFrame()
+    alertas_dl = alertas_caja[alertas_caja["Caja"] == caja_download] if len(alertas_caja) > 0 else pd.DataFrame()
+else:
+    df_ventas_dl = df_ventas_f
+    alertas_dl = alertas_caja
+
+col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
-    if len(df_ventas_f) > 0:
-        csv = df_ventas_f.to_csv(index=False).encode('utf-8')
-        st.download_button("📊 Ventas (CSV)", csv, "ventas.csv", "text/csv", use_container_width=True)
+    if len(df_ventas_dl) > 0:
+        csv = df_ventas_dl.to_csv(index=False).encode('utf-8')
+        nombre = f"ventas_{caja_download.replace(' ', '_').lower()}.csv"
+        st.download_button("📊 Ventas", csv, nombre, "text/csv", use_container_width=True)
+
 with col2:
-    if len(alertas_caja) > 0:
-        csv = alertas_caja.to_csv(index=False).encode('utf-8')
-        st.download_button("🚨 Alertas (CSV)", csv, "alertas.csv", "text/csv", use_container_width=True)
+    if len(alertas_dl) > 0:
+        alertas_export = alertas_dl.copy().reset_index(drop=True)
+        alertas_export["ID"] = alertas_export.apply(
+            lambda r: f"{r['Fecha']}_{r['Caja']}_{r['Op']}_{r['Doc']}", axis=1
+        )
+        alertas_export["Justificación"] = alertas_export["ID"].apply(
+            lambda i: justificaciones.get(i, {}).get("estado", "🟡 Pendiente")
+        )
+        alertas_export["Motivo"] = alertas_export["ID"].apply(
+            lambda i: justificaciones.get(i, {}).get("motivo", "")
+        )
+        alertas_export = alertas_export.drop(columns=["ID"])
+        csv = alertas_export.to_csv(index=False).encode('utf-8')
+        nombre = f"alertas_{caja_download.replace(' ', '_').lower()}.csv"
+        st.download_button("🚨 Alertas", csv, nombre, "text/csv", use_container_width=True)
+
 with col3:
     if len(izipay_huerf) > 0:
         csv = izipay_huerf.to_csv(index=False).encode('utf-8')
-        st.download_button("⚠️ Huérf. Izipay", csv, "huerfanos_izi.csv", "text/csv", use_container_width=True)
+        st.download_button("⚠️ Huérf.Izi", csv, "huerf_izi.csv", "text/csv", use_container_width=True)
+
 with col4:
     if len(yape_huerf) > 0:
         csv = yape_huerf.to_csv(index=False).encode('utf-8')
-        st.download_button("📲 Huérf. Yape", csv, "huerfanos_yape.csv", "text/csv", use_container_width=True)
+        st.download_button("📲 Huérf.Yape", csv, "huerf_yape.csv", "text/csv", use_container_width=True)
+
+with col5:
+    if len(bcp_huerf) > 0:
+        csv = bcp_huerf.to_csv(index=False).encode('utf-8')
+        st.download_button("🏦 Huérf.BCP", csv, "huerf_bcp.csv", "text/csv", use_container_width=True)
 
 st.markdown("---")
 st.caption("Dashboard Gerencial | Sistema Anti-Fraude 🐍")
