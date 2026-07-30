@@ -207,7 +207,6 @@ def guardar_historial(data):
 # FUNCIONES DE PARSEO
 # ============================================================
 def normalizar_num_op(val):
-    """Convierte cualquier valor a string limpio SIN quitar ceros iniciales"""
     if val is None: return ""
     if isinstance(val, float):
         if pd.isna(val): return ""
@@ -234,7 +233,6 @@ def parsear_metodo_pago(texto_crudo):
     num_op = None
     m_num = re.search(r"(?:izi?|bcp|yape|plin|bim)[\s/]+(\d{4,})", texto_lower)
     if m_num:
-        # MANTENER número TAL CUAL, con ceros iniciales si los tiene
         num_op = m_num.group(1)
     hora_ref = None
     if num_op is None:
@@ -340,21 +338,18 @@ def leer_bcp(bcp_file):
     df = df[df[col_monto] > 0]
     df["es_venta"] = True
     if col_desc:
-        patrones_no_venta = [
-            "TRAN.CTAS.TERC", "SUNA", "DEPOSITO EFECTIVO",
-            "COMISION", "MANT", "PORTES",
+        patrones_nunca_venta = [
+            "SUNA", "COMISION", "MANT", "PORTES", "ITF",
         ]
-        mask_no_venta = df[col_desc].astype(str).str.upper().str.contains("|".join(patrones_no_venta), na=False)
-        df.loc[mask_no_venta, "es_venta"] = False
+        mask_nunca_venta = df[col_desc].astype(str).str.upper().str.contains("|".join(patrones_nunca_venta), na=False)
+        df.loc[mask_nunca_venta, "es_venta"] = False
     return df, col_fecha, col_monto, col_numop, col_desc
 
 def comparar_num_op(val1, val2):
-    """Compara 2 números de operación de forma flexible: con y sin ceros iniciales"""
     if not val1 or not val2: return False
     v1 = normalizar_num_op(val1)
     v2 = normalizar_num_op(val2)
     if not v1 or not v2: return False
-    # Comparación exacta O sin ceros iniciales
     return v1 == v2 or v1.lstrip("0") == v2.lstrip("0")
 
 def conciliar_multi(df_digital, df_izipay, df_yape, df_bcp):
@@ -371,7 +366,6 @@ def conciliar_multi(df_digital, df_izipay, df_yape, df_bcp):
         monto = v["monto_pagado"]
         encontrado = None
         
-        # PRIORIDAD 1: Por número de operación (con comparación flexible)
         if num_op:
             if len(df_izipay) > 0 and encontrado is None:
                 for idx, row in df_izipay[~df_izipay["Usado"]].iterrows():
@@ -396,7 +390,6 @@ def conciliar_multi(df_digital, df_izipay, df_yape, df_bcp):
                         encontrado = ("BCP", row.get("Hora_str", "-"), row["Monto total"], row.get("descripcion", "BCP"))
                         break
         
-        # PRIORIDAD 2: Por hora + monto (Izipay y Yape)
         if encontrado is None and hm is not None:
             if len(df_izipay) > 0:
                 for idx, row in df_izipay[~df_izipay["Usado"]].iterrows():
@@ -411,7 +404,6 @@ def conciliar_multi(df_digital, df_izipay, df_yape, df_bcp):
                         encontrado = ("Yape", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "Yape"))
                         break
         
-        # PRIORIDAD 3: BCP solo por monto
         if encontrado is None and len(df_bcp) > 0:
             for idx, row in df_bcp[~df_bcp["Usado"]].iterrows():
                 if abs(row["Monto total"] - monto) <= 0.10:
@@ -419,7 +411,6 @@ def conciliar_multi(df_digital, df_izipay, df_yape, df_bcp):
                     encontrado = ("BCP", row.get("Hora_str", "-"), row["Monto total"], row.get("descripcion", "BCP"))
                     break
         
-        # Último recurso: solo monto en Izipay/Yape
         if encontrado is None:
             if len(df_izipay) > 0:
                 for idx, row in df_izipay[~df_izipay["Usado"]].iterrows():
@@ -538,7 +529,6 @@ with st.sidebar:
                         data["bcp"] = [b for b in data["bcp"] 
                                       if pd.to_datetime(b["fecha_hora"]).date() not in fechas_nuevas_b]
                         for _, row in df_b.iterrows():
-                            # GUARDAR número TAL CUAL con ceros iniciales
                             num_op_bcp = ""
                             if col_numop and pd.notna(row[col_numop]):
                                 num_op_bcp = normalizar_num_op(row[col_numop])
@@ -661,10 +651,71 @@ if len(df_digital_base) > 0:
     df_res_full, df_izi_check, df_yape_check, df_bcp_check = conciliar_multi(
         df_digital_base, df_izipay_base, df_yape_para_cruce, df_bcp_para_cruce
     )
-    alertas_caja_full = df_res_full[df_res_full["Estado"].str.contains("SIN COBRO")]
+    alertas_caja_full = df_res_full[df_res_full["Estado"].str.contains("SIN COBRO")].copy()
     izipay_huerf_full = df_izi_check[~df_izi_check["Usado"]] if len(df_izi_check) > 0 else pd.DataFrame()
     yape_huerf_full = df_yape_check[~df_yape_check["Usado"]] if len(df_yape_check) > 0 else pd.DataFrame()
     bcp_huerf_full = df_bcp_check[~df_bcp_check["Usado"]] if len(df_bcp_check) > 0 else pd.DataFrame()
+    
+    # ============================================================
+    # 🔥 RESCATE INTELIGENTE: Cruzar alertas con BCP por MONTO
+    # (aunque la cajera no haya puesto la ref bcp/xxxxx)
+    # ============================================================
+    if len(alertas_caja_full) > 0 and len(bcp_huerf_full) > 0:
+        bcp_disponibles = bcp_huerf_full.copy()
+        indices_rescatados = []
+        
+        for idx_alerta in alertas_caja_full.index:
+            alerta = alertas_caja_full.loc[idx_alerta]
+            monto_alerta = alerta["Monto"]
+            
+            # Buscar cobro BCP con mismo monto
+            for idx_bcp in bcp_disponibles.index:
+                bcp_row = bcp_disponibles.loc[idx_bcp]
+                if abs(bcp_row["Monto total"] - monto_alerta) <= 0.10:
+                    # ¡MATCH! Rescatar esta alerta
+                    num_op_bcp = bcp_row.get("num_operacion", "")
+                    desc_bcp = str(bcp_row.get("descripcion", "BCP"))[:30]
+                    
+                    # Actualizar df_res_full
+                    df_res_full.at[idx_alerta, "Estado"] = "✅ OK (rescate BCP)"
+                    df_res_full.at[idx_alerta, "Fuente"] = f"BCP Op {num_op_bcp}"
+                    df_res_full.at[idx_alerta, "Cobro Monto"] = f"S/ {bcp_row['Monto total']:.2f}"
+                    df_res_full.at[idx_alerta, "Cobro Hora"] = bcp_row.get("Hora_str", "-")
+                    
+                    # Marcar BCP como usado
+                    df_bcp_check.at[idx_bcp, "Usado"] = True
+                    bcp_disponibles = bcp_disponibles.drop(idx_bcp)
+                    indices_rescatados.append(idx_alerta)
+                    break
+        
+        # Quitar las alertas rescatadas del listado
+        if indices_rescatados:
+            alertas_caja_full = alertas_caja_full.drop(indices_rescatados)
+        
+        # Actualizar huérfanos BCP
+        bcp_huerf_full = df_bcp_check[~df_bcp_check["Usado"]] if len(df_bcp_check) > 0 else pd.DataFrame()
+    
+    # ============================================================
+    # FILTRAR BCP HUÉRFANOS: Solo mostrar los que tienen número
+    # de operación que aparezca en algún POS (sospechosos reales)
+    # ============================================================
+    if len(bcp_huerf_full) > 0 and len(df_digital_base) > 0:
+        nums_op_pos = set()
+        for _, v in df_digital_base.iterrows():
+            n = v.get("num_operacion")
+            if n:
+                nums_op_pos.add(normalizar_num_op(n))
+                nums_op_pos.add(normalizar_num_op(n).lstrip("0"))
+        
+        def tiene_match_potencial(num_bcp):
+            if not num_bcp: return False
+            n = normalizar_num_op(num_bcp)
+            return n in nums_op_pos or n.lstrip("0") in nums_op_pos
+        
+        bcp_huerf_full = bcp_huerf_full.copy()
+        bcp_huerf_full["tiene_match"] = bcp_huerf_full["num_operacion"].apply(tiene_match_potencial)
+        bcp_huerf_full = bcp_huerf_full[bcp_huerf_full["tiene_match"] == True]
+        bcp_huerf_full = bcp_huerf_full.drop(columns=["tiene_match"])
     
     def buscar_relacion(monto, izi_huerf, yape_huerf, bcp_huerf):
         relaciones = []
@@ -1195,7 +1246,8 @@ with tab3:
 
 with tab4:
     if len(bcp_huerf) > 0:
-        st.warning(f"⚠️ **{len(bcp_huerf)} cobros BCP sin registrar** por **S/ {monto_no_reg_bcp:.2f}**")
+        st.warning(f"⚠️ **{len(bcp_huerf)} cobros BCP sospechosos** por **S/ {monto_no_reg_bcp:.2f}**")
+        st.caption("Solo se muestran cobros BCP cuyo número de operación aparece en algún POS")
         cols_bcp = ["Monto total"]
         if "descripcion" in bcp_huerf.columns: cols_bcp.append("descripcion")
         if "num_operacion" in bcp_huerf.columns: cols_bcp.append("num_operacion")
@@ -1205,7 +1257,7 @@ with tab4:
             "bc"
         )
     else:
-        st.success("✅ Todos los cobros BCP registrados")
+        st.success("✅ Sin cobros BCP sospechosos")
 
 with tab5:
     if len(df_res) > 0:
