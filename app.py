@@ -612,6 +612,21 @@ df_bcp_base = df_bcp_raw[df_bcp_raw["Fecha"].isin(fechas_sel)] if len(df_bcp_raw
 df_bcp_para_cruce = df_bcp_base[df_bcp_base["es_venta"] == True] if len(df_bcp_base) > 0 else df_bcp_base
 cajas_filt = [c for c in lista_cajas if c["fecha"] in fechas_sel and c["caja"] in cajas_sel]
 
+# ============================================================
+# OPCIÓN D: DETECTAR DUPLICADOS YAPE-BCP ANTES DE CONCILIAR
+# Si un cobro Yape coincide en monto con un BCP, es el mismo cobro
+# Eliminamos el Yape porque el BCP tiene número de operación (más confiable)
+# ============================================================
+df_yape_para_cruce = df_yape_base.copy() if len(df_yape_base) > 0 else pd.DataFrame()
+if len(df_yape_para_cruce) > 0 and len(df_bcp_para_cruce) > 0:
+    montos_bcp = df_bcp_para_cruce["Monto total"].round(2).tolist()
+    df_yape_para_cruce["es_duplicado_bcp"] = df_yape_para_cruce["Monto total"].round(2).apply(
+        lambda m: m in montos_bcp
+    )
+    duplicados_removidos = df_yape_para_cruce["es_duplicado_bcp"].sum()
+    df_yape_para_cruce = df_yape_para_cruce[df_yape_para_cruce["es_duplicado_bcp"] == False]
+    df_yape_para_cruce = df_yape_para_cruce.drop(columns=["es_duplicado_bcp"])
+
 # CONCILIACIÓN
 df_digital_base = df_ventas_base[df_ventas_base["metodo_pago"].isin(
     ["Yape", "Tarjeta de crédito", "Tarjeta de débito"]
@@ -619,16 +634,14 @@ df_digital_base = df_ventas_base[df_ventas_base["metodo_pago"].isin(
 
 if len(df_digital_base) > 0:
     df_res_full, df_izi_check, df_yape_check, df_bcp_check = conciliar_multi(
-        df_digital_base, df_izipay_base, df_yape_base, df_bcp_para_cruce
+        df_digital_base, df_izipay_base, df_yape_para_cruce, df_bcp_para_cruce
     )
     alertas_caja_full = df_res_full[df_res_full["Estado"].str.contains("SIN COBRO")]
     izipay_huerf_full = df_izi_check[~df_izi_check["Usado"]] if len(df_izi_check) > 0 else pd.DataFrame()
     yape_huerf_full = df_yape_check[~df_yape_check["Usado"]] if len(df_yape_check) > 0 else pd.DataFrame()
     bcp_huerf_full = df_bcp_check[~df_bcp_check["Usado"]] if len(df_bcp_check) > 0 else pd.DataFrame()
     
-    # ============================================================
     # DETECTAR POSIBLES RELACIONES ENTRE ALERTAS Y HUÉRFANOS
-    # ============================================================
     def buscar_relacion(monto, izi_huerf, yape_huerf, bcp_huerf):
         relaciones = []
         if len(izi_huerf) > 0:
@@ -995,6 +1008,69 @@ with col2:
     st.plotly_chart(fig, use_container_width=True)
 
 # ============================================================
+# FUNCIÓN: TABLA CON JUSTIFICACIÓN Y MOTIVO (para todas las alertas)
+# ============================================================
+def tabla_con_justificacion(df, tipo_alerta, cols_base, key_suffix):
+    """Renderiza tabla con columnas de Justificación y Motivo editables"""
+    if len(df) == 0:
+        return None
+    
+    df_display = df.copy().reset_index(drop=True)
+    # Crear ID único basado en el tipo de alerta
+    if tipo_alerta == "caja":
+        df_display["ID"] = df_display.apply(
+            lambda r: f"caja_{r['Fecha']}_{r['Caja']}_{r['Op']}_{r['Doc']}", axis=1
+        )
+    else:
+        # Para huérfanos, usar hora + monto + tipo
+        df_display["ID"] = df_display.apply(
+            lambda r: f"{tipo_alerta}_{r.get('Hora_str', 'N')}_{r['Monto total']:.2f}", axis=1
+        )
+    
+    df_display["Justificación"] = df_display["ID"].apply(
+        lambda i: justificaciones.get(i, {}).get("estado", "🟡 Pendiente")
+    )
+    df_display["Motivo"] = df_display["ID"].apply(
+        lambda i: justificaciones.get(i, {}).get("motivo", "")
+    )
+    
+    cols_mostrar = cols_base + ["Justificación", "Motivo"]
+    
+    edited_df = st.data_editor(
+        df_display[cols_mostrar],
+        column_config={
+            "Justificación": st.column_config.SelectboxColumn(
+                "Justificación", width="medium",
+                options=["🟡 Pendiente", "🟢 Justificado", "🔴 Fraude confirmado"],
+                required=True,
+            ),
+            "Motivo": st.column_config.TextColumn("Motivo", width="large"),
+            "Monto total": st.column_config.NumberColumn("Monto", format="S/ %.2f"),
+            "Monto": st.column_config.NumberColumn("Monto", format="S/ %.2f"),
+        },
+        disabled=[c for c in cols_base],
+        hide_index=True, use_container_width=True,
+        key=f"editor_{tipo_alerta}_{key_suffix}"
+    )
+    
+    if st.button(f"💾 Guardar Justificaciones {tipo_alerta.upper()}", 
+                 type="primary", key=f"btn_save_{tipo_alerta}_{key_suffix}"):
+        for idx, row in edited_df.iterrows():
+            original_row = df_display.iloc[idx]
+            id_alerta = original_row["ID"]
+            justificaciones[id_alerta] = {
+                "estado": row["Justificación"],
+                "motivo": row["Motivo"],
+                "fecha_registro": datetime.now().isoformat()
+            }
+        data["justificaciones"] = justificaciones
+        guardar_historial(data)
+        st.success("✅ Guardado")
+        st.rerun()
+    
+    return edited_df
+
+# ============================================================
 # ALERTAS
 # ============================================================
 st.markdown('<div class="section-title">🚨 Detalle de Alertas</div>', unsafe_allow_html=True)
@@ -1020,7 +1096,7 @@ with tab1:
             df_display = alertas_caja.copy()
         df_display = df_display.reset_index(drop=True)
         df_display["ID"] = df_display.apply(
-            lambda r: f"{r['Fecha']}_{r['Caja']}_{r['Op']}_{r['Doc']}", axis=1
+            lambda r: f"caja_{r['Fecha']}_{r['Caja']}_{r['Op']}_{r['Doc']}", axis=1
         )
         df_display["Justificación"] = df_display["ID"].apply(
             lambda i: justificaciones.get(i, {}).get("estado", "🟡 Pendiente")
@@ -1028,9 +1104,8 @@ with tab1:
         df_display["Motivo"] = df_display["ID"].apply(
             lambda i: justificaciones.get(i, {}).get("motivo", "")
         )
-        st.markdown("**✏️ Edita la Justificación y Motivo. La columna 🔗 Posible Relación te ayuda a identificar cobros huérfanos que coinciden en monto.**")
+        st.markdown("**✏️ Edita la Justificación y Motivo. La columna 🔗 Posible Relación te ayuda a identificar cobros huérfanos con el mismo monto.**")
         
-        # Agregar columna Posible Relación si existe
         if "Posible Relación" in df_display.columns:
             cols_mostrar = ["Fecha", "Caja", "Op", "Doc", "Método", "Ref", "Monto", 
                            "Estado", "Posible Relación", "Justificación", "Motivo"]
@@ -1049,9 +1124,8 @@ with tab1:
                 "Motivo": st.column_config.TextColumn("Motivo", width="large"),
                 "Monto": st.column_config.NumberColumn("Monto", format="S/ %.2f"),
                 "Posible Relación": st.column_config.TextColumn(
-                    "🔗 Posible Relación", 
-                    width="large",
-                    help="Cobros huérfanos con el mismo monto (podrían ser la misma venta)"
+                    "🔗 Posible Relación", width="large",
+                    help="Cobros huérfanos con el mismo monto"
                 ),
             },
             disabled=["Fecha", "Caja", "Op", "Doc", "Método", "Ref", "Monto", "Estado", "Posible Relación"],
@@ -1060,7 +1134,7 @@ with tab1:
         )
         col_g1, col_g2 = st.columns([1, 4])
         with col_g1:
-            if st.button("💾 Guardar Justificaciones", type="primary", use_container_width=True):
+            if st.button("💾 Guardar Justificaciones", type="primary", use_container_width=True, key="save_caja"):
                 for idx, row in edited_df.iterrows():
                     original_row = df_display.iloc[idx]
                     id_alerta = original_row["ID"]
@@ -1087,16 +1161,22 @@ with tab1:
 with tab2:
     if len(izipay_huerf) > 0:
         st.warning(f"⚠️ **{len(izipay_huerf)} cobros Izipay sin registrar** por **S/ {monto_no_reg_izi:.2f}**")
-        st.dataframe(izipay_huerf[["Hora_str", "Medio de cobro", "Monto total", "Estado de venta"]],
-                     use_container_width=True, hide_index=True)
+        tabla_con_justificacion(
+            izipay_huerf, "izipay",
+            ["Hora_str", "Medio de cobro", "Monto total", "Estado de venta"],
+            "izi"
+        )
     else:
         st.success("✅ Todos los cobros Izipay registrados")
 
 with tab3:
     if len(yape_huerf) > 0:
         st.warning(f"⚠️ **{len(yape_huerf)} cobros Yape sin registrar** por **S/ {monto_no_reg_yape:.2f}**")
-        st.dataframe(yape_huerf[["Hora_str", "Monto total"]],
-                     use_container_width=True, hide_index=True)
+        tabla_con_justificacion(
+            yape_huerf, "yape",
+            ["Hora_str", "Monto total"],
+            "yp"
+        )
     else:
         st.success("✅ Todos los cobros Yape registrados")
 
@@ -1106,7 +1186,11 @@ with tab4:
         cols_bcp = ["Monto total"]
         if "descripcion" in bcp_huerf.columns: cols_bcp.append("descripcion")
         if "num_operacion" in bcp_huerf.columns: cols_bcp.append("num_operacion")
-        st.dataframe(bcp_huerf[cols_bcp], use_container_width=True, hide_index=True)
+        tabla_con_justificacion(
+            bcp_huerf, "bcp",
+            cols_bcp,
+            "bc"
+        )
     else:
         st.success("✅ Todos los cobros BCP registrados")
 
@@ -1114,7 +1198,10 @@ with tab5:
     if len(df_res) > 0:
         df_res_display = df_res.copy().reset_index(drop=True)
         df_res_display["ID"] = df_res_display.apply(
-            lambda r: f"{r['Fecha']}_{r['Caja']}_{r['Op']}_{r['Doc']}", axis=1
+            lambda r: f"caja_{r['Fecha']}_{r['Caja']}_{r['Op']}_{r['Doc']}", axis=1
+        )
+        df_res_display["Justificación"] = df_res_display["ID"].apply(
+            lambda i: justificaciones.get(i, {}).get("estado", "-")
         )
         df_res_display["Motivo"] = df_res_display["ID"].apply(
             lambda i: justificaciones.get(i, {}).get("motivo", "")
@@ -1149,7 +1236,7 @@ with col2:
     if len(alertas_dl) > 0:
         alertas_export = alertas_dl.copy().reset_index(drop=True)
         alertas_export["ID"] = alertas_export.apply(
-            lambda r: f"{r['Fecha']}_{r['Caja']}_{r['Op']}_{r['Doc']}", axis=1
+            lambda r: f"caja_{r['Fecha']}_{r['Caja']}_{r['Op']}_{r['Doc']}", axis=1
         )
         alertas_export["Justificación"] = alertas_export["ID"].apply(
             lambda i: justificaciones.get(i, {}).get("estado", "🟡 Pendiente")
