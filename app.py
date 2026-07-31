@@ -107,10 +107,7 @@ st.markdown("""
     .kpi-label { font-size: 10px; color: #6B7280; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
     .kpi-value { font-size: 20px; font-weight: 800; color: #111827; margin-top: 4px; }
     .kpi-sub { font-size: 10px; color: #9CA3AF; margin-top: 4px; }
-    .stButton > button {
-        font-size: 12px !important;
-        padding: 4px 12px !important;
-    }
+    .stButton > button { font-size: 12px !important; padding: 4px 12px !important; }
     .detalle-header {
         background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
         color: white; padding: 24px; border-radius: 16px; margin-bottom: 20px;
@@ -216,32 +213,54 @@ def normalizar_num_op(val):
     return s
 
 def parsear_metodo_pago(texto_crudo):
-    if not texto_crudo: return ("Desconocido", None, None, None)
+    """
+    Retorna: (metodo, hora_ref, origen, num_op_principal, lista_nums_op)
+    Maneja:
+      - "Yape Ref: izi/03340363"
+      - "Yape Ref: 12611295" (solo número)
+      - "Yape Ref: bcp 03548015=25.50 / 05343734=81" (pago dividido)
+      - "Yape Ref: Bcp 02728760" (mayúscula, espacio)
+    """
+    if not texto_crudo: return ("Desconocido", None, None, None, [])
     texto = texto_crudo.replace("\n", " ").strip()
     texto_lower = texto.lower()
+    
     metodo = "Otro"
     if "yape" in texto_lower: metodo = "Yape"
     elif "tarjeta de\ncrédito" in texto_crudo.lower() or "tarjeta de crédito" in texto_lower: metodo = "Tarjeta de crédito"
     elif "tarjeta de\ndébito" in texto_crudo.lower() or "tarjeta de débito" in texto_lower: metodo = "Tarjeta de débito"
     elif "efectivo" in texto_lower: metodo = "Efectivo"
+    
     origen = None
     m_o = re.search(r"\b(izi?|bcp|yape|plin|bim)\b", texto_lower)
     if m_o:
         val = m_o.group(1).upper()
         if val == "IZ": val = "IZI"
         origen = val
-    num_op = None
-    m_num = re.search(r"(?:izi?|bcp|yape|plin|bim)[\s/]+(\d{4,})", texto_lower)
-    if m_num:
-        num_op = m_num.group(1)
+    
+    # EXTRAER TODOS LOS NÚMEROS DE OPERACIÓN
+    numeros_op = []
+    
+    # Quitar horas primero (formato HH:MM)
+    texto_sin_horas = re.sub(r"\b\d{1,2}:\d{2}\b", "", texto)
+    
+    # Buscar TODOS los números de 5+ dígitos (números de operación reales)
+    todos_numeros = re.findall(r"\b(\d{5,})\b", texto_sin_horas)
+    for n in todos_numeros:
+        if n not in numeros_op:
+            numeros_op.append(n)
+    
+    num_op = numeros_op[0] if numeros_op else None
+    
     hora_ref = None
-    if num_op is None:
+    if not numeros_op:
         m_h = re.search(r"(\d{1,2}):(\d{2})", texto)
         if m_h:
             h, m = int(m_h.group(1)), int(m_h.group(2))
             if 0 <= h < 24 and 0 <= m < 60:
                 hora_ref = f"{h:02d}:{m:02d}"
-    return (metodo, hora_ref, origen, num_op)
+    
+    return (metodo, hora_ref, origen, num_op, numeros_op)
 
 def extraer_ventas_pdf(pdf_file, nombre_caja):
     ventas = []
@@ -272,7 +291,7 @@ def extraer_ventas_pdf(pdf_file, nombre_caja):
                 for fila in tabla:
                     if fila and len(fila) >= 12 and fila[1] == "Venta":
                         try:
-                            metodo, hora_ref, origen, num_op = parsear_metodo_pago(fila[2] or "")
+                            metodo, hora_ref, origen, num_op, numeros_op = parsear_metodo_pago(fila[2] or "")
                             ventas.append({
                                 "fecha": resumen["fecha"],
                                 "caja": nombre_caja,
@@ -282,6 +301,7 @@ def extraer_ventas_pdf(pdf_file, nombre_caja):
                                 "hora_referencia": hora_ref,
                                 "origen_ref": origen,
                                 "num_operacion": num_op,
+                                "numeros_op_todos": numeros_op,
                                 "documento": fila[4],
                                 "monto_pagado": float(fila[10].replace(",", "")) if fila[10] else 0,
                                 "raw_metodo": (fila[2] or "").replace("\n", " ")
@@ -338,9 +358,7 @@ def leer_bcp(bcp_file):
     df = df[df[col_monto] > 0]
     df["es_venta"] = True
     if col_desc:
-        patrones_nunca_venta = [
-            "SUNA", "COMISION", "MANT", "PORTES", "ITF",
-        ]
+        patrones_nunca_venta = ["SUNA", "COMISION", "MANT", "PORTES", "ITF"]
         mask_nunca_venta = df[col_desc].astype(str).str.upper().str.contains("|".join(patrones_nunca_venta), na=False)
         df.loc[mask_nunca_venta, "es_venta"] = False
     return df, col_fecha, col_monto, col_numop, col_desc
@@ -360,82 +378,125 @@ def conciliar_multi(df_digital, df_izipay, df_yape, df_bcp):
     if len(df_yape) > 0: df_yape["Usado"] = False
     if len(df_bcp) > 0: df_bcp["Usado"] = False
     resultados = []
+    
     for _, v in df_digital.iterrows():
-        num_op = v.get("num_operacion")
+        # Obtener TODOS los números de operación posibles
+        nums_a_buscar = v.get("numeros_op_todos", [])
+        if not nums_a_buscar and v.get("num_operacion"):
+            nums_a_buscar = [v.get("num_operacion")]
+        
         hm = h2m(v.get("hora_referencia"))
         monto = v["monto_pagado"]
         encontrado = None
         
-        if num_op:
-            if len(df_izipay) > 0 and encontrado is None:
+        # ============================================================
+        # NIVEL 1: Buscar por CADA número de operación en los 3 canales
+        # ============================================================
+        for num_op in nums_a_buscar:
+            if encontrado: break
+            
+            # Izipay
+            if len(df_izipay) > 0:
                 for idx, row in df_izipay[~df_izipay["Usado"]].iterrows():
                     for col in df_izipay.columns:
-                        if comparar_num_op(row.get(col, ""), num_op) and abs(row["Monto total"] - monto) <= 0.10:
+                        if comparar_num_op(row.get(col, ""), num_op):
                             df_izipay.at[idx, "Usado"] = True
                             encontrado = ("Izipay", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "-"))
                             break
                     if encontrado: break
-            if len(df_yape) > 0 and encontrado is None:
+            
+            # Yape
+            if not encontrado and len(df_yape) > 0:
                 for idx, row in df_yape[~df_yape["Usado"]].iterrows():
                     for col in df_yape.columns:
-                        if comparar_num_op(row.get(col, ""), num_op) and abs(row["Monto total"] - monto) <= 0.10:
+                        if comparar_num_op(row.get(col, ""), num_op):
                             df_yape.at[idx, "Usado"] = True
                             encontrado = ("Yape", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "Yape"))
                             break
                     if encontrado: break
-            if len(df_bcp) > 0 and encontrado is None:
+            
+            # BCP
+            if not encontrado and len(df_bcp) > 0:
                 for idx, row in df_bcp[~df_bcp["Usado"]].iterrows():
-                    if comparar_num_op(row.get("num_operacion", ""), num_op) and abs(row["Monto total"] - monto) <= 0.10:
+                    if comparar_num_op(row.get("num_operacion", ""), num_op):
                         df_bcp.at[idx, "Usado"] = True
                         encontrado = ("BCP", row.get("Hora_str", "-"), row["Monto total"], row.get("descripcion", "BCP"))
                         break
         
-        if encontrado is None and hm is not None:
+        # ============================================================
+        # NIVEL 2: Por hora + monto (Izipay/Yape)
+        # ============================================================
+        if not encontrado and hm is not None:
             if len(df_izipay) > 0:
                 for idx, row in df_izipay[~df_izipay["Usado"]].iterrows():
                     if abs(row["Monto total"] - monto) <= 0.10 and abs(row["Hora_minutos"] - hm) <= 10:
                         df_izipay.at[idx, "Usado"] = True
                         encontrado = ("Izipay", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "-"))
                         break
-            if encontrado is None and len(df_yape) > 0:
+            if not encontrado and len(df_yape) > 0:
                 for idx, row in df_yape[~df_yape["Usado"]].iterrows():
                     if abs(row["Monto total"] - monto) <= 0.10 and abs(row["Hora_minutos"] - hm) <= 10:
                         df_yape.at[idx, "Usado"] = True
                         encontrado = ("Yape", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "Yape"))
                         break
         
-        if encontrado is None and len(df_bcp) > 0:
-            for idx, row in df_bcp[~df_bcp["Usado"]].iterrows():
-                if abs(row["Monto total"] - monto) <= 0.10:
-                    df_bcp.at[idx, "Usado"] = True
-                    encontrado = ("BCP", row.get("Hora_str", "-"), row["Monto total"], row.get("descripcion", "BCP"))
-                    break
-        
-        if encontrado is None:
+        # ============================================================
+        # NIVEL 3: Solo MONTO exacto en los 3 canales
+        # ============================================================
+        if not encontrado:
+            # Izipay
             if len(df_izipay) > 0:
                 for idx, row in df_izipay[~df_izipay["Usado"]].iterrows():
                     if abs(row["Monto total"] - monto) <= 0.10:
                         df_izipay.at[idx, "Usado"] = True
                         encontrado = ("Izipay*", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "-"))
                         break
-            if encontrado is None and len(df_yape) > 0:
+            # Yape
+            if not encontrado and len(df_yape) > 0:
                 for idx, row in df_yape[~df_yape["Usado"]].iterrows():
                     if abs(row["Monto total"] - monto) <= 0.10:
                         df_yape.at[idx, "Usado"] = True
                         encontrado = ("Yape*", row["Hora_str"], row["Monto total"], row.get("Medio de cobro", "Yape"))
                         break
+            # BCP
+            if not encontrado and len(df_bcp) > 0:
+                for idx, row in df_bcp[~df_bcp["Usado"]].iterrows():
+                    if abs(row["Monto total"] - monto) <= 0.10:
+                        df_bcp.at[idx, "Usado"] = True
+                        encontrado = ("BCP*", row.get("Hora_str", "-"), row["Monto total"], row.get("descripcion", "BCP"))
+                        break
         
+        # ============================================================
+        # NIVEL 4: Suma de BCP (pagos divididos)
+        # ============================================================
+        if not encontrado and len(df_bcp) > 0 and len(nums_a_buscar) > 1:
+            # Intentar sumar múltiples BCP que juntos den el monto
+            bcp_libres = df_bcp[~df_bcp["Usado"]]
+            for idx1, row1 in bcp_libres.iterrows():
+                for idx2, row2 in bcp_libres.iterrows():
+                    if idx1 != idx2:
+                        suma = row1["Monto total"] + row2["Monto total"]
+                        if abs(suma - monto) <= 0.10:
+                            df_bcp.at[idx1, "Usado"] = True
+                            df_bcp.at[idx2, "Usado"] = True
+                            encontrado = ("BCP (dividido)", "-", suma, 
+                                         f"{row1.get('descripcion', '')[:15]}+{row2.get('descripcion', '')[:15]}")
+                            break
+                if encontrado: break
+        
+        # Registrar resultado
         if encontrado:
             fuente, hora_e, monto_e, medio_e = encontrado
             estado = "✅ OK"
         else:
             fuente, hora_e, monto_e, medio_e = "-", "-", "-", "-"
             estado = "🚨 SIN COBRO"
+        
         resultados.append({
             "Fecha": v.get("fecha", ""), "Caja": v["caja"], "Op": v["n_op"],
             "Doc": v["documento"], "Método": v["metodo_pago"],
             "Ref": v.get("raw_metodo", ""),
-            "N° Op": num_op or "-",
+            "N° Op": ", ".join(nums_a_buscar) if nums_a_buscar else "-",
             "Hora Ref": v["hora_referencia"] or "-", 
             "Monto": v["monto_pagado"],
             "Estado": estado, "Fuente": fuente,
@@ -656,56 +717,14 @@ if len(df_digital_base) > 0:
     yape_huerf_full = df_yape_check[~df_yape_check["Usado"]] if len(df_yape_check) > 0 else pd.DataFrame()
     bcp_huerf_full = df_bcp_check[~df_bcp_check["Usado"]] if len(df_bcp_check) > 0 else pd.DataFrame()
     
-    # ============================================================
-    # 🔥 RESCATE INTELIGENTE: Cruzar alertas con BCP por MONTO
-    # (aunque la cajera no haya puesto la ref bcp/xxxxx)
-    # ============================================================
-    if len(alertas_caja_full) > 0 and len(bcp_huerf_full) > 0:
-        bcp_disponibles = bcp_huerf_full.copy()
-        indices_rescatados = []
-        
-        for idx_alerta in alertas_caja_full.index:
-            alerta = alertas_caja_full.loc[idx_alerta]
-            monto_alerta = alerta["Monto"]
-            
-            # Buscar cobro BCP con mismo monto
-            for idx_bcp in bcp_disponibles.index:
-                bcp_row = bcp_disponibles.loc[idx_bcp]
-                if abs(bcp_row["Monto total"] - monto_alerta) <= 0.10:
-                    # ¡MATCH! Rescatar esta alerta
-                    num_op_bcp = bcp_row.get("num_operacion", "")
-                    desc_bcp = str(bcp_row.get("descripcion", "BCP"))[:30]
-                    
-                    # Actualizar df_res_full
-                    df_res_full.at[idx_alerta, "Estado"] = "✅ OK (rescate BCP)"
-                    df_res_full.at[idx_alerta, "Fuente"] = f"BCP Op {num_op_bcp}"
-                    df_res_full.at[idx_alerta, "Cobro Monto"] = f"S/ {bcp_row['Monto total']:.2f}"
-                    df_res_full.at[idx_alerta, "Cobro Hora"] = bcp_row.get("Hora_str", "-")
-                    
-                    # Marcar BCP como usado
-                    df_bcp_check.at[idx_bcp, "Usado"] = True
-                    bcp_disponibles = bcp_disponibles.drop(idx_bcp)
-                    indices_rescatados.append(idx_alerta)
-                    break
-        
-        # Quitar las alertas rescatadas del listado
-        if indices_rescatados:
-            alertas_caja_full = alertas_caja_full.drop(indices_rescatados)
-        
-        # Actualizar huérfanos BCP
-        bcp_huerf_full = df_bcp_check[~df_bcp_check["Usado"]] if len(df_bcp_check) > 0 else pd.DataFrame()
-    
-    # ============================================================
-    # FILTRAR BCP HUÉRFANOS: Solo mostrar los que tienen número
-    # de operación que aparezca en algún POS (sospechosos reales)
-    # ============================================================
+    # FILTRAR BCP HUÉRFANOS: Solo mostrar los que tienen número que aparezca en algún POS
     if len(bcp_huerf_full) > 0 and len(df_digital_base) > 0:
         nums_op_pos = set()
         for _, v in df_digital_base.iterrows():
-            n = v.get("num_operacion")
-            if n:
-                nums_op_pos.add(normalizar_num_op(n))
-                nums_op_pos.add(normalizar_num_op(n).lstrip("0"))
+            for n in v.get("numeros_op_todos", []):
+                if n:
+                    nums_op_pos.add(normalizar_num_op(n))
+                    nums_op_pos.add(normalizar_num_op(n).lstrip("0"))
         
         def tiene_match_potencial(num_bcp):
             if not num_bcp: return False
@@ -764,7 +783,19 @@ izipay_total = df_izipay_f["Monto total"].sum() if len(df_izipay_f) > 0 else 0
 yape_total = df_yape_f["Monto total"].sum() if len(df_yape_f) > 0 else 0
 bcp_total = df_bcp_f["Monto total"].sum() if len(df_bcp_f) > 0 else 0
 ingreso_total = df_ventas_f["monto_pagado"].sum() if len(df_ventas_f) > 0 else 0
-monto_sospechoso = alertas_caja["Monto"].sum() if len(alertas_caja) > 0 else 0
+
+# Solo contar como riesgo las alertas PENDIENTES
+alertas_pendientes = alertas_caja.copy() if len(alertas_caja) > 0 else pd.DataFrame()
+if len(alertas_pendientes) > 0:
+    alertas_pendientes["ID"] = alertas_pendientes.apply(
+        lambda r: f"caja_{r['Fecha']}_{r['Caja']}_{r['Op']}_{r['Doc']}", axis=1
+    )
+    alertas_pendientes["Justif"] = alertas_pendientes["ID"].apply(
+        lambda i: justificaciones.get(i, {}).get("estado", "🟡 Pendiente")
+    )
+    alertas_pendientes = alertas_pendientes[alertas_pendientes["Justif"] == "🟡 Pendiente"]
+
+monto_sospechoso = alertas_pendientes["Monto"].sum() if len(alertas_pendientes) > 0 else 0
 monto_no_reg_izi = izipay_huerf["Monto total"].sum() if len(izipay_huerf) > 0 else 0
 monto_no_reg_yape = yape_huerf["Monto total"].sum() if len(yape_huerf) > 0 else 0
 monto_no_reg_bcp = bcp_huerf["Monto total"].sum() if len(bcp_huerf) > 0 else 0
@@ -788,7 +819,7 @@ st.markdown(f"""
     </div>
     <div style="text-align:right;">
         <div style="font-size:28px; font-weight:800; color:{est_color};">S/ {riesgo_total:,.2f}</div>
-        <div style="font-size:12px; color:#6B7280;">Monto en riesgo</div>
+        <div style="font-size:12px; color:#6B7280;">Monto en riesgo (pendientes)</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -799,7 +830,7 @@ st.markdown(f"""
 st.markdown('<div class="section-title">📊 Indicadores Clave (Click en "Ver Detalle")</div>', unsafe_allow_html=True)
 
 pct_efectivo = (efectivo_total/ingreso_total*100) if ingreso_total > 0 else 0
-total_alertas = len(alertas_caja) + len(izipay_huerf) + len(yape_huerf) + len(bcp_huerf)
+total_alertas = len(alertas_pendientes) + len(izipay_huerf) + len(yape_huerf) + len(bcp_huerf)
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
@@ -885,7 +916,7 @@ with col7:
     st.markdown(f"""
     <div class="kpi-container" style="border-top-color:#DC2626;">
         <div class="kpi-icon">🚨</div>
-        <div class="kpi-label">Alertas</div>
+        <div class="kpi-label">Alertas Pendientes</div>
         <div class="kpi-value">{total_alertas}</div>
         <div class="kpi-sub">S/ {riesgo_total:,.2f}</div>
     </div>
@@ -1018,7 +1049,7 @@ if len(cajas_filt) > 0:
         ventas_c = df_ventas_base[(df_ventas_base["caja"] == caja_info["caja"]) & 
                                     (df_ventas_base["fecha"] == caja_info["fecha"])]
         if len(ventas_c) > 0:
-            cajas_html_list.append(tarjeta_caja(caja_info, ventas_c, alertas_caja))
+            cajas_html_list.append(tarjeta_caja(caja_info, ventas_c, alertas_pendientes))
     for i in range(0, len(cajas_html_list), 2):
         col1, col2 = st.columns(2)
         with col1:
@@ -1142,7 +1173,7 @@ def tabla_con_justificacion(df, tipo_alerta, cols_base, key_suffix):
 st.markdown('<div class="section-title">🚨 Detalle de Alertas</div>', unsafe_allow_html=True)
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    f"🚨 Caja sin Cobro ({len(alertas_caja)})",
+    f"🚨 Caja sin Cobro ({len(alertas_pendientes)})",
     f"⚠️ Izipay sin Caja ({len(izipay_huerf)})",
     f"📲 Yape sin Caja ({len(yape_huerf)})",
     f"🏦 BCP sin Caja ({len(bcp_huerf)})",
@@ -1151,74 +1182,103 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 
 with tab1:
     if len(alertas_caja) > 0:
-        st.error(f"⚠️ **{len(alertas_caja)} ventas sospechosas** por **S/ {monto_sospechoso:.2f}**")
-        col_f1, col_f2 = st.columns([1, 3])
-        with col_f1:
-            cajas_alerta = ["Todas"] + sorted(alertas_caja["Caja"].unique().tolist())
-            filtro_caja = st.selectbox("🏪 Filtrar por caja", cajas_alerta, key="filtro_caja_alerta")
-        if filtro_caja != "Todas":
-            df_display = alertas_caja[alertas_caja["Caja"] == filtro_caja].copy()
-        else:
-            df_display = alertas_caja.copy()
-        df_display = df_display.reset_index(drop=True)
-        df_display["ID"] = df_display.apply(
+        df_alertas_todas = alertas_caja.copy().reset_index(drop=True)
+        df_alertas_todas["ID"] = df_alertas_todas.apply(
             lambda r: f"caja_{r['Fecha']}_{r['Caja']}_{r['Op']}_{r['Doc']}", axis=1
         )
-        df_display["Justificación"] = df_display["ID"].apply(
+        df_alertas_todas["Justificación"] = df_alertas_todas["ID"].apply(
             lambda i: justificaciones.get(i, {}).get("estado", "🟡 Pendiente")
         )
-        df_display["Motivo"] = df_display["ID"].apply(
+        df_alertas_todas["Motivo"] = df_alertas_todas["ID"].apply(
             lambda i: justificaciones.get(i, {}).get("motivo", "")
         )
-        st.markdown("**✏️ Edita la Justificación y Motivo. La columna 🔗 Posible Relación te ayuda a identificar cobros huérfanos con el mismo monto.**")
-        if "Posible Relación" in df_display.columns:
-            cols_mostrar = ["Fecha", "Caja", "Op", "Doc", "Método", "Ref", "Monto", 
-                           "Estado", "Posible Relación", "Justificación", "Motivo"]
+        
+        pendientes_df = df_alertas_todas[df_alertas_todas["Justificación"] == "🟡 Pendiente"]
+        resueltas_df = df_alertas_todas[df_alertas_todas["Justificación"] != "🟡 Pendiente"]
+        
+        col_toggle, col_stats = st.columns([1, 2])
+        with col_toggle:
+            ver_resueltas = st.checkbox(f"👁️ Ver resueltas ({len(resueltas_df)})", key="ver_resueltas")
+        
+        if ver_resueltas:
+            df_alertas_activas = df_alertas_todas
         else:
-            cols_mostrar = ["Fecha", "Caja", "Op", "Doc", "Método", "Ref", "Monto", 
-                           "Estado", "Justificación", "Motivo"]
-        edited_df = st.data_editor(
-            df_display[cols_mostrar],
-            column_config={
-                "Justificación": st.column_config.SelectboxColumn(
-                    "Justificación", width="medium",
-                    options=["🟡 Pendiente", "🟢 Justificado", "🔴 Fraude confirmado"],
-                    required=True,
-                ),
-                "Motivo": st.column_config.TextColumn("Motivo", width="large"),
-                "Monto": st.column_config.NumberColumn("Monto", format="S/ %.2f"),
-                "Posible Relación": st.column_config.TextColumn(
-                    "🔗 Posible Relación", width="large",
-                    help="Cobros huérfanos con el mismo monto"
-                ),
-            },
-            disabled=["Fecha", "Caja", "Op", "Doc", "Método", "Ref", "Monto", "Estado", "Posible Relación"],
-            hide_index=True, use_container_width=True,
-            key=f"editor_alertas_{filtro_caja}"
-        )
-        col_g1, col_g2 = st.columns([1, 4])
-        with col_g1:
-            if st.button("💾 Guardar Justificaciones", type="primary", use_container_width=True, key="save_caja"):
-                for idx, row in edited_df.iterrows():
-                    original_row = df_display.iloc[idx]
-                    id_alerta = original_row["ID"]
-                    justificaciones[id_alerta] = {
-                        "estado": row["Justificación"],
-                        "motivo": row["Motivo"],
-                        "fecha_registro": datetime.now().isoformat()
-                    }
-                data["justificaciones"] = justificaciones
-                guardar_historial(data)
-                st.success("✅ Guardado")
-                st.rerun()
+            df_alertas_activas = pendientes_df
+        
+        monto_pendiente = pendientes_df["Monto"].sum() if len(pendientes_df) > 0 else 0
+        
+        st.error(f"⚠️ **{len(pendientes_df)} alertas pendientes** por **S/ {monto_pendiente:.2f}** | {len(resueltas_df)} resueltas")
+        
+        if len(df_alertas_activas) == 0:
+            st.success("✅ ¡Todas las alertas han sido revisadas!")
+        else:
+            col_f1, col_f2 = st.columns([1, 3])
+            with col_f1:
+                cajas_alerta = ["Todas"] + sorted(df_alertas_activas["Caja"].unique().tolist())
+                filtro_caja = st.selectbox("🏪 Filtrar por caja", cajas_alerta, key="filtro_caja_alerta")
+            
+            if filtro_caja != "Todas":
+                df_display = df_alertas_activas[df_alertas_activas["Caja"] == filtro_caja].copy()
+            else:
+                df_display = df_alertas_activas.copy()
+            
+            df_display = df_display.reset_index(drop=True)
+            
+            st.markdown("**✏️ Al marcar como 'Justificado' o 'Fraude confirmado' la alerta desaparecerá del listado activo.**")
+            
+            if "Posible Relación" in df_display.columns:
+                cols_mostrar = ["Fecha", "Caja", "Op", "Doc", "Método", "Ref", "Monto", 
+                               "Estado", "Posible Relación", "Justificación", "Motivo"]
+            else:
+                cols_mostrar = ["Fecha", "Caja", "Op", "Doc", "Método", "Ref", "Monto", 
+                               "Estado", "Justificación", "Motivo"]
+            
+            edited_df = st.data_editor(
+                df_display[cols_mostrar],
+                column_config={
+                    "Justificación": st.column_config.SelectboxColumn(
+                        "Justificación", width="medium",
+                        options=["🟡 Pendiente", "🟢 Justificado", "🔴 Fraude confirmado"],
+                        required=True,
+                    ),
+                    "Motivo": st.column_config.TextColumn("Motivo", width="large"),
+                    "Monto": st.column_config.NumberColumn("Monto", format="S/ %.2f"),
+                    "Posible Relación": st.column_config.TextColumn(
+                        "🔗 Posible Relación", width="large",
+                        help="Cobros huérfanos con el mismo monto"
+                    ),
+                },
+                disabled=["Fecha", "Caja", "Op", "Doc", "Método", "Ref", "Monto", "Estado", "Posible Relación"],
+                hide_index=True, use_container_width=True,
+                key=f"editor_alertas_{filtro_caja}"
+            )
+            col_g1, col_g2 = st.columns([1, 4])
+            with col_g1:
+                if st.button("💾 Guardar Justificaciones", type="primary", use_container_width=True, key="save_caja"):
+                    for idx, row in edited_df.iterrows():
+                        original_row = df_display.iloc[idx]
+                        id_alerta = original_row["ID"]
+                        justificaciones[id_alerta] = {
+                            "estado": row["Justificación"],
+                            "motivo": row["Motivo"],
+                            "fecha_registro": datetime.now().isoformat()
+                        }
+                    data["justificaciones"] = justificaciones
+                    guardar_historial(data)
+                    st.success("✅ Guardado")
+                    st.rerun()
+        
         st.markdown("---")
-        col_r1, col_r2, col_r3 = st.columns(3)
-        pendientes = (edited_df["Justificación"] == "🟡 Pendiente").sum()
-        justificadas = (edited_df["Justificación"] == "🟢 Justificado").sum()
-        fraudes = (edited_df["Justificación"] == "🔴 Fraude confirmado").sum()
+        col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+        pendientes = (df_alertas_todas["Justificación"] == "🟡 Pendiente").sum()
+        justificadas = (df_alertas_todas["Justificación"] == "🟢 Justificado").sum()
+        fraudes = (df_alertas_todas["Justificación"] == "🔴 Fraude confirmado").sum()
+        monto_fraudes = df_alertas_todas[df_alertas_todas["Justificación"] == "🔴 Fraude confirmado"]["Monto"].sum()
+        
         with col_r1: st.metric("🟡 Pendientes", pendientes)
         with col_r2: st.metric("🟢 Justificadas", justificadas)
-        with col_r3: st.metric("🔴 Fraudes", fraudes)
+        with col_r3: st.metric("🔴 Fraudes", fraudes, delta=f"S/ {monto_fraudes:.2f}", delta_color="inverse")
+        with col_r4: st.metric("📊 Total", len(df_alertas_todas))
     else:
         st.success("✅ No hay ventas sin cobro")
 
