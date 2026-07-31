@@ -496,7 +496,7 @@ def conciliar_multi(df_digital, df_izipay, df_yape, df_bcp):
             "Fecha": v.get("fecha", ""), "Caja": v["caja"], "Op": v["n_op"],
             "Doc": v["documento"], "Método": v["metodo_pago"],
             "Ref": v.get("raw_metodo", ""),
-            "N° Op": ", ".join(nums_a_buscar) if nums_a_buscar else "-",
+            "N° Op": ", ".join([str(n) for n in nums_a_buscar]) if nums_a_buscar else "-",
             "Hora Ref": v["hora_referencia"] or "-", 
             "Monto": v["monto_pagado"],
             "Estado": estado, "Fuente": fuente,
